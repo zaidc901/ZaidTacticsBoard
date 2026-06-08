@@ -20,7 +20,12 @@ export function exportProject(project: Project) {
   download(`${project.name.replace(/\s+/g, '-').toLowerCase()}.json`, URL.createObjectURL(blob));
 }
 
-export async function recordCanvas(canvas: HTMLCanvasElement, seconds = 4, fps = 30) {
+function cloneStageToCanvas(stage: Konva.Stage, pixelRatio = 1) {
+  return stage.toCanvas({ pixelRatio });
+}
+
+export async function recordStage(stage: Konva.Stage, seconds = 4, fps = 30) {
+  const canvas = cloneStageToCanvas(stage, 1);
   const stream = canvas.captureStream(fps);
   const recorder = new MediaRecorder(stream, { mimeType: 'video/webm' });
   const chunks: BlobPart[] = [];

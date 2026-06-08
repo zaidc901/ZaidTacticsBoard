@@ -1,13 +1,29 @@
-import { RefObject, useMemo, useRef, useState } from 'react';
+import { RefObject, useEffect, useMemo, useRef, useState } from 'react';
 import { Stage, Layer, Rect, Line, Circle, Text, Group, Arrow, Label, Tag } from 'react-konva';
 import Konva from 'konva';
 import { useTacticsStore } from '../store/tacticsStore';
-import { Drawing } from '../types/domain';
+import { Drawing, Player } from '../types/domain';
 
 const pitchMargin = 54;
 const clamp = (n: number) => Math.max(0, Math.min(1, n));
 const toAbs = (points: number[], w: number, h: number) => points.map((point, i) => (i % 2 ? pitchMargin + point * (h - pitchMargin * 2) : pitchMargin + point * (w - pitchMargin * 2)));
 const toRel = (x: number, y: number, w: number, h: number) => ({ x: clamp((x - pitchMargin) / (w - pitchMargin * 2)), y: clamp((y - pitchMargin) / (h - pitchMargin * 2)) });
+
+function useElementSize<T extends HTMLElement>() {
+  const ref = useRef<T | null>(null);
+  const [size, setSize] = useState({ width: 900, height: 1200 });
+
+  useEffect(() => {
+    if (!ref.current) return;
+    const observer = new ResizeObserver(([entry]) => {
+      setSize({ width: entry.contentRect.width, height: entry.contentRect.height });
+    });
+    observer.observe(ref.current);
+    return () => observer.disconnect();
+  }, []);
+
+  return { ref, size };
+}
 
 function Pitch({ width, height }: { width: number; height: number }) {
   const settings = useTacticsStore(s => s.project.settings);
@@ -44,7 +60,7 @@ function Pitch({ width, height }: { width: number; height: number }) {
   </Group>;
 }
 
-function PlayerMarker({ player, width, height }: { player: any; width: number; height: number }) {
+function PlayerMarker({ player, width, height }: { player: Player; width: number; height: number }) {
   const { selectedId, select, movePlayer, updatePlayer, removePlayer, duplicatePlayer } = useTacticsStore();
   const abs = toAbs([player.x, player.y], width, height);
   const selected = selectedId === player.id;
@@ -76,29 +92,35 @@ function BallMarker({ width, height }: { width: number; height: number }) {
 }
 
 function DrawingShape({ drawing, width, height }: { drawing: Drawing; width: number; height: number }) {
-  const { select, selectedId } = useTacticsStore();
+  const { select, selectedId, tool, removeDrawing } = useTacticsStore();
   if (drawing.hidden) return null;
   const points = toAbs(drawing.points, width, height);
-  const common = { stroke: selectedId === drawing.id ? '#61f4a2' : drawing.color, strokeWidth: drawing.strokeWidth, opacity: drawing.opacity, dash: drawing.dashed ? [16, 10] : undefined, onClick: () => select(drawing.id) };
+  const onClick = () => tool === 'erase' ? removeDrawing(drawing.id) : select(drawing.id);
+  const common = { stroke: selectedId === drawing.id ? '#61f4a2' : drawing.color, strokeWidth: drawing.strokeWidth, opacity: drawing.opacity, dash: drawing.dashed ? [16, 10] : undefined, onClick };
   if (drawing.type === 'zone') return <Rect x={points[0]} y={points[1]} width={points[2] * (width - pitchMargin * 2)} height={points[3] * (height - pitchMargin * 2)} fill={drawing.fill} {...common} />;
-  if (drawing.type === 'text') return <Text x={points[0]} y={points[1]} text={drawing.text ?? 'Tactical note'} fill={drawing.color} fontSize={30} fontStyle="bold" />;
+  if (drawing.type === 'text') return <Text x={points[0]} y={points[1]} text={drawing.text ?? 'Tactical note'} fill={drawing.color} fontSize={30} fontStyle="bold" onClick={onClick} />;
   return <Arrow points={points} pointerLength={18} pointerWidth={18} tension={drawing.type === 'curve' ? 0.45 : 0} lineCap="round" lineJoin="round" {...common} />;
 }
 
 export function PitchCanvas({ stageRef }: { stageRef: RefObject<Konva.Stage | null> }) {
   const { project, tool, addDrawing, select } = useTacticsStore();
   const [draft, setDraft] = useState<number[] | null>(null);
+  const { ref: containerRef, size } = useElementSize<HTMLDivElement>();
   const { width, height } = project.settings;
-  const scale = useMemo(() => Math.max(0.25, Math.min(1, Math.min((window.innerWidth - 520) / width, (window.innerHeight - 190) / height))), [width, height]);
+  const scale = useMemo(() => Math.max(0.2, Math.min(1, Math.min(size.width / width, size.height / height))), [height, size.height, size.width, width]);
   const pointerRel = (stage: Konva.Stage) => { const p = stage.getPointerPosition() ?? { x: 0, y: 0 }; return toRel(p.x / scale, p.y / scale, width, height); };
-  return <div className="rounded-[2rem] border border-white/10 bg-black/30 p-3 shadow-2xl">
+  return <div ref={containerRef} className="flex h-full w-full items-center justify-center rounded-[2rem] border border-white/10 bg-black/30 p-3 shadow-2xl">
     <Stage ref={stageRef} width={width * scale} height={height * scale} scale={{ x: scale, y: scale }} onMouseDown={(e) => {
       if (e.target === e.target.getStage()) select(undefined);
-      if (tool !== 'select') { const rel = pointerRel(e.target.getStage()!); setDraft([rel.x, rel.y]); }
+      if (tool !== 'select' && tool !== 'erase') { const rel = pointerRel(e.target.getStage()!); setDraft([rel.x, rel.y]); }
     }} onMouseUp={(e) => {
-      if (!draft || tool === 'select') return;
+      if (!draft || tool === 'select' || tool === 'erase') return;
       const rel = pointerRel(e.target.getStage()!);
-      const drawing: Drawing = { id: crypto.randomUUID(), type: tool === 'zone' ? 'zone' : tool === 'text' ? 'text' : tool === 'run' ? 'curve' : 'arrow', points: tool === 'zone' ? [draft[0], draft[1], rel.x - draft[0], rel.y - draft[1]] : [draft[0], draft[1], rel.x, rel.y], text: 'New insight', color: tool === 'run' ? '#f59e0b' : '#61f4a2', fill: '#61f4a2', strokeWidth: 6, opacity: 0.8, dashed: tool === 'run', locked: false, hidden: false, zIndex: 10 };
+      const zoneX = Math.min(draft[0], rel.x);
+      const zoneY = Math.min(draft[1], rel.y);
+      const zoneW = Math.abs(rel.x - draft[0]);
+      const zoneH = Math.abs(rel.y - draft[1]);
+      const drawing: Drawing = { id: crypto.randomUUID(), type: tool === 'zone' ? 'zone' : tool === 'text' ? 'text' : tool === 'run' ? 'curve' : 'arrow', points: tool === 'zone' ? [zoneX, zoneY, zoneW, zoneH] : [draft[0], draft[1], rel.x, rel.y], text: 'New insight', color: tool === 'run' ? '#f59e0b' : '#61f4a2', fill: '#61f4a2', strokeWidth: 6, opacity: 0.8, dashed: tool === 'run', locked: false, hidden: false, zIndex: 10 };
       addDrawing(drawing); setDraft(null);
     }}>
       <Layer><Pitch width={width} height={height} /></Layer>

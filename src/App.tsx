@@ -4,14 +4,13 @@ import { LeftSidebar, RightSidebar } from './components/Sidebar';
 import { PitchCanvas } from './components/PitchCanvas';
 import { Toolbar } from './components/Toolbar';
 import { Timeline } from './components/Timeline';
-import { exportStageImage, recordCanvas } from './utils/exporters';
+import { exportStageImage, recordStage } from './utils/exporters';
 
 export default function App() {
   const stageRef = useRef<Konva.Stage | null>(null);
   const exportImage = () => stageRef.current && exportStageImage(stageRef.current, 'png');
   const exportVideo = () => {
-    const canvas = stageRef.current?.content.querySelector('canvas');
-    if (canvas) void recordCanvas(canvas, 4, 30);
+    if (stageRef.current) void recordStage(stageRef.current, 4, 30);
   };
   return <div className="flex h-screen flex-col overflow-hidden bg-ink text-white">
     <header className="flex items-center justify-between border-b border-white/10 bg-panel/90 px-4 py-3 backdrop-blur">
@@ -25,7 +24,7 @@ export default function App() {
       <LeftSidebar />
       <section className="relative flex min-w-0 flex-1 flex-col items-center justify-center overflow-auto bg-[radial-gradient(circle_at_50%_10%,rgba(97,244,162,.18),transparent_36%),linear-gradient(135deg,#071015,#0b1117)] p-4">
         <div className="absolute top-4 z-10"><Toolbar /></div>
-        <div className="pt-20"><PitchCanvas stageRef={stageRef} /></div>
+        <div className="h-full w-full pt-20"><PitchCanvas stageRef={stageRef} /></div>
       </section>
       <RightSidebar onExportImage={exportImage} onExportVideo={exportVideo} />
     </main>
