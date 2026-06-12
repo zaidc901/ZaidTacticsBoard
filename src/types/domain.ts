@@ -30,6 +30,8 @@ export interface Player {
   secondaryColor: string;
   outline: string;
   opacity: number;
+  size?: number;
+  nameBackground?: string;
   labelPosition: 'bottom' | 'top' | 'left' | 'right';
   markerStyle: 'circle' | 'number' | 'shirt' | 'initials';
   flag?: string;

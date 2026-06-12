@@ -486,14 +486,16 @@ function PlayerEditPanel() {
   return <div className="w-full">
     <section className={panelClass('space-y-2', dark)}>
       <p className="text-[10px] font-black uppercase tracking-[0.22em] text-[#2563eb]">Selected player</p>
-      {selectedPlayer ? <div className="dock-edit-grid grid gap-2 sm:grid-cols-2 xl:grid-cols-[1.2fr_.55fr_.7fr_.7fr_auto_auto_auto_auto]">
+      {selectedPlayer ? <div className="dock-edit-grid grid gap-2 sm:grid-cols-2 xl:grid-cols-[1.2fr_.55fr_.8fr_.7fr_.7fr_.8fr_auto_auto_auto_auto]">
         <Field label="Name" value={selectedPlayer.displayName} onChange={v => updatePlayer(selectedPlayer.id, { displayName: v.toUpperCase() })} />
         <Field label="Number" type="number" value={selectedPlayer.number} onChange={v => {
           const number = Number(v);
           if (Number.isFinite(number)) updatePlayer(selectedPlayer.id, { number });
         }} />
+        <Field label={`Icon size ${Math.round((selectedPlayer.size ?? 1) * 100)}%`} type="range" min="0.65" max="1.65" step="0.05" value={selectedPlayer.size ?? 1} onChange={v => updatePlayer(selectedPlayer.id, { size: Number(v) })} />
         <ColorField label="Fill" value={selectedPlayer.color} onChange={v => updatePlayer(selectedPlayer.id, { color: v })} />
         <ColorField label="Outline" value={selectedPlayer.outline} onChange={v => updatePlayer(selectedPlayer.id, { outline: v })} />
+        <ColorField label="Name background" value={selectedPlayer.nameBackground ?? '#ffffff'} onChange={v => updatePlayer(selectedPlayer.id, { nameBackground: v })} />
         <button onClick={() => updatePlayer(selectedPlayer.id, { showNumber: !(selectedPlayer.showNumber ?? true) })} className={`self-end rounded-lg border px-3 py-2 text-sm font-black ${selectedPlayer.showNumber ?? true ? 'border-[#2563eb] bg-[#eff6ff] text-[#1d4ed8]' : 'border-[#d7e5f6] bg-white/80 text-[#0b172a]'}`}>Number {selectedPlayer.showNumber ?? true ? 'on' : 'off'}</button>
         <button onClick={() => { checkpointHistory(); setPlayerStarter(selectedPlayer.id, !selectedPlayer.starter); }} className="self-end rounded-lg border border-[#d7e5f6] bg-white/80 px-3 py-2 text-sm font-black text-[#0b172a] hover:border-[#2563eb]">{selectedPlayer.starter ? 'Move to bench' : 'Send to pitch'}</button>
         <button onClick={() => duplicatePlayer(selectedPlayer.id)} className="self-end rounded-lg border border-[#d7e5f6] bg-white/80 px-3 py-2 text-sm font-black text-[#0b172a] hover:border-[#2563eb]"><Copy size={15} /></button>

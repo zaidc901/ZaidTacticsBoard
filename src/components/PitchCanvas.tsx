@@ -7,7 +7,7 @@ import { useTacticsStore } from '../store/tacticsStore';
 import { Ball, BallDesign, Drawing, FillPattern, PlaybackDrawing, Player, Team, ToolStyle } from '../types/domain';
 
 const pitchMargin = 56;
-const markerRadius = 24;
+const baseMarkerRadius = 24;
 const clamp01 = (n: number) => Math.max(0, Math.min(1, n));
 const clampRange = (n: number, min: number, max: number) => Math.max(min, Math.min(max, n));
 
@@ -270,6 +270,15 @@ function CustomBadge({ url, radius }: { url: string; radius: number }) {
   </Group>;
 }
 
+function readableTextColor(background: string) {
+  const hex = background.match(/^#([\da-f]{6})$/i)?.[1];
+  if (!hex) return '#0b172a';
+  const red = Number.parseInt(hex.slice(0, 2), 16);
+  const green = Number.parseInt(hex.slice(2, 4), 16);
+  const blue = Number.parseInt(hex.slice(4, 6), 16);
+  return red * 0.299 + green * 0.587 + blue * 0.114 > 155 ? '#0b172a' : '#ffffff';
+}
+
 function PlayerMarker({ player, mapper }: { player: Player; mapper: Mapper }) {
   const { selectedIds, toggleSelection, moveSelectedItems, playing, setPlayerStarter } = useTacticsStore();
   const team = useTacticsStore(state => state.project.teams.find(item => item.id === player.teamId));
@@ -277,9 +286,12 @@ function PlayerMarker({ player, mapper }: { player: Player; mapper: Mapper }) {
   const dragRef = useRef<{ ids: string[]; x: number; y: number } | null>(null);
   const [x, y] = mapper.toAbs(player.x, player.y);
   const selected = !playing && selectedIds.includes(player.id);
-  const labelWidth = 108;
+  const markerRadius = baseMarkerRadius * clampRange(player.size ?? 1, 0.65, 1.65);
+  const labelWidth = Math.max(88, 108 * clampRange(player.size ?? 1, 0.65, 1.65));
   const hasName = (team?.showNames ?? true) && player.displayName.trim().length > 0;
   const displayName = player.displayName.length > 14 ? `${player.displayName.slice(0, 13)}.` : player.displayName;
+  const nameBackground = player.nameBackground ?? '#ffffff';
+  const nameTextColor = readableTextColor(nameBackground);
   const badgeImage = team?.badge;
   const showPresetBadge = team?.showBadge ?? true;
   const hasBadge = Boolean(badgeImage || (showPresetBadge && player.flag));
@@ -295,14 +307,14 @@ function PlayerMarker({ player, mapper }: { player: Player; mapper: Mapper }) {
   };
 
   return <Group name="board-item" x={x} y={y} draggable={!player.locked && !playing} dragDistance={5}
-    onClick={event => {
+    onMouseDown={event => {
       event.cancelBubble = true;
       const native = event.evt as MouseEvent;
       if (native.button !== 0) return;
       if (native.ctrlKey || native.metaKey) toggleSelection(player.id);
       else useTacticsStore.getState().select(player.id);
     }}
-    onTap={event => { event.cancelBubble = true; useTacticsStore.getState().select(player.id); }}
+    onTouchStart={event => { event.cancelBubble = true; useTacticsStore.getState().select(player.id); }}
     onMouseMove={(e) => { const stage = e.target.getStage(); if (stage && !playing) stage.container().style.cursor = 'grab'; }}
     onDragStart={(e) => { const stage = e.target.getStage(); if (stage) stage.container().style.cursor = 'grabbing'; startDrag(e); }}
     onDragEnd={(e) => {
@@ -330,11 +342,11 @@ function PlayerMarker({ player, mapper }: { player: Player; mapper: Mapper }) {
       {badgeImage && <CustomBadge url={badgeImage} radius={markerRadius} />}
       {(team?.showNumbers ?? true) && (player.showNumber ?? true) && <Text text={String(player.number)} width={markerRadius * 2} x={-markerRadius} y={-10} align="center" fill={hasBadge ? '#07111f' : '#ffffff'} fontFamily="Inter, Arial, sans-serif" fontStyle="bold" fontSize={18} shadowColor={hasBadge ? '#ffffff' : '#0b172a'} shadowBlur={5} shadowOpacity={0.92} />}
       {hasName && <Group x={-labelWidth / 2} y={markerRadius + 6} opacity={player.opacity}>
-        <Rect width={labelWidth} height={25} fill="#ffffff" stroke={selected ? '#2563eb' : '#c7d8ee'} strokeWidth={1.4} cornerRadius={7} shadowBlur={6} shadowColor="#dbeafe" />
-        <Text text={displayName} width={labelWidth} height={25} align="center" verticalAlign="middle" fill="#0b172a" fontFamily="Inter, Arial, sans-serif" fontSize={12} fontStyle="bold" />
+        <Rect width={labelWidth} height={25} fill={nameBackground} stroke={selected ? '#2563eb' : '#c7d8ee'} strokeWidth={1.4} cornerRadius={7} shadowBlur={6} shadowColor="#0b172a" shadowOpacity={0.18} />
+        <Text text={displayName} width={labelWidth} height={25} align="center" verticalAlign="middle" fill={nameTextColor} fontFamily="Inter, Arial, sans-serif" fontSize={12} fontStyle="bold" />
       </Group>}
     </Group>
-    <Circle radius={markerRadius + 16} fill="#ffffff" opacity={0.001} />
+    <Circle radius={markerRadius + 12} fill="rgba(255,255,255,0)" />
   </Group>;
 }
 
@@ -663,8 +675,8 @@ function DrawingShape({ drawing, mapper, interactive = true }: { drawing: Drawin
   } : undefined;
   const interactionProps = {
     name: 'board-item',
-    onClick: onSelect,
-    onTap: onSelect,
+    onMouseDown: onSelect,
+    onTouchStart: onSelect,
     listening: interactive,
     draggable: interactive && !drawing.locked,
     dragDistance: 5,
@@ -716,7 +728,7 @@ function DrawingShape({ drawing, mapper, interactive = true }: { drawing: Drawin
           {selected && <Rect x={-2} y={-2} width={absWidth + 4} height={absHeight + 4} stroke={selectionStroke} strokeWidth={1.5} opacity={0.5} dash={[7, 6]} cornerRadius={12} />}
           <Rect width={absWidth} height={absHeight} stroke={stroke} strokeWidth={drawing.strokeWidth} opacity={Math.max(0.72, drawing.opacity)} dash={drawing.dashed ? [14, 10] : undefined} cornerRadius={10} />
         </Group>
-        <Rect key="area-hit-target" x={-20} y={-20} width={absWidth + 40} height={absHeight + 40} fill="#ffffff" opacity={0.001} cornerRadius={22} />
+        <Rect key="area-hit-target" x={-20} y={-20} width={absWidth + 40} height={absHeight + 40} fill="rgba(255,255,255,0)" cornerRadius={22} />
       </Group>
     </>;
   }
@@ -736,7 +748,7 @@ function DrawingShape({ drawing, mapper, interactive = true }: { drawing: Drawin
           {selected && <Circle radius={radius + 2} stroke={selectionStroke} strokeWidth={1.5} opacity={0.5} dash={[7, 6]} />}
           <Circle radius={radius} stroke={stroke} strokeWidth={drawing.strokeWidth} opacity={Math.max(0.72, drawing.opacity)} dash={drawing.dashed ? [14, 10] : undefined} />
         </Group>
-        <Circle key="area-hit-target" radius={radius + 20} fill="#ffffff" opacity={0.001} />
+        <Circle key="area-hit-target" radius={radius + 20} fill="rgba(255,255,255,0)" />
       </Group>
     </>;
   }
@@ -822,7 +834,7 @@ function DrawingShape({ drawing, mapper, interactive = true }: { drawing: Drawin
           {selected && <Line points={localPoints} closed stroke={selectionStroke} strokeWidth={drawing.strokeWidth + 3} opacity={0.38} dash={[7, 6]} lineJoin="round" />}
           <Line points={localPoints} closed stroke={stroke} strokeWidth={drawing.strokeWidth} opacity={Math.max(0.72, drawing.opacity)} dash={drawing.dashed ? [14, 10] : undefined} lineJoin="round" />
         </Group>
-        <Line key="area-hit-target" points={localPoints} closed fill="#ffffff" stroke="#ffffff" opacity={0.001} strokeWidth={40} lineJoin="round" />
+        <Line key="area-hit-target" points={localPoints} closed fill="rgba(255,255,255,0)" stroke="rgba(255,255,255,0)" strokeWidth={40} lineJoin="round" />
       </Group>
     </>;
   }
@@ -924,8 +936,8 @@ function AreaResizeControls({ drawing, mapper, onResizeStart }: { drawing: Drawi
         onMouseDown={event => onResizeStart(drawing, handle, event)}
         onTouchStart={event => onResizeStart(drawing, handle, event)}
         onMouseEnter={event => { const stage = event.target.getStage(); if (stage) stage.container().style.cursor = areaHandleCursors[handle]; }}
-        onMouseLeave={event => { const stage = event.target.getStage(); if (stage) stage.container().style.cursor = 'default'; }}>
-        <Circle radius={28} fill="#ffffff" opacity={0.001} />
+        onMouseLeave={event => { const stage = event.target.getStage(); if (stage && event.evt.buttons === 0) stage.container().style.cursor = 'default'; }}>
+        <Circle radius={28} fill="rgba(255,255,255,0)" />
         <Rect x={-11} y={-11} width={22} height={22} cornerRadius={6} fill="#ffffff" stroke="#1d4ed8" strokeWidth={3} shadowColor="#0f172a" shadowBlur={5} shadowOpacity={0.2} />
       </Group>;
     })}
@@ -1040,10 +1052,12 @@ export function PitchCanvas({ stageRef }: { stageRef: RefObject<Konva.Stage | nu
   const { project, tool, toolStyle, viewZoom, squadBarsOpen, dockPosition, playbackFrame, playing, selectedIds, addDrawing, updateDrawing, placePlayer, select, setSelection, checkpointHistory, setTool, setDockTab, setDockPosition } = useTacticsStore();
   const [draft, setDraft] = useState<{ id: string; start: number[]; current: number[] } | null>(null);
   const [selection, setSelectionBox] = useState<{ start: number[]; current: number[] } | null>(null);
-  const [areaResize, setAreaResize] = useState<AreaResizeSession | null>(null);
   const [shareDone, setShareDone] = useState(false);
   const pointerFrameRef = useRef<number | null>(null);
   const pendingPointerRef = useRef<{ x: number; y: number } | null>(null);
+  const areaResizeRef = useRef<AreaResizeSession | null>(null);
+  const areaResizeFrameRef = useRef<number | null>(null);
+  const pendingAreaResizeRef = useRef<{ x: number; y: number } | null>(null);
   const { ref: containerRef, size } = useElementSize<HTMLDivElement>();
   const { width, height, format } = project.settings;
   const dark = project.settings.theme === 'dark';
@@ -1075,10 +1089,13 @@ export function PitchCanvas({ stageRef }: { stageRef: RefObject<Konva.Stage | nu
   useEffect(() => {
     setDraft(null);
     setSelectionBox(null);
-    setAreaResize(null);
+    areaResizeRef.current = null;
     if (pointerFrameRef.current !== null) cancelAnimationFrame(pointerFrameRef.current);
+    if (areaResizeFrameRef.current !== null) cancelAnimationFrame(areaResizeFrameRef.current);
     pointerFrameRef.current = null;
+    areaResizeFrameRef.current = null;
     pendingPointerRef.current = null;
+    pendingAreaResizeRef.current = null;
     const stage = stageRef.current;
     if (stage) stage.container().style.cursor = tool === 'select' ? 'default' : 'crosshair';
   }, [tool]);
@@ -1093,6 +1110,7 @@ export function PitchCanvas({ stageRef }: { stageRef: RefObject<Konva.Stage | nu
 
   useEffect(() => () => {
     if (pointerFrameRef.current !== null) cancelAnimationFrame(pointerFrameRef.current);
+    if (areaResizeFrameRef.current !== null) cancelAnimationFrame(areaResizeFrameRef.current);
   }, []);
 
   const beginAt = (stage: Konva.Stage) => {
@@ -1103,24 +1121,22 @@ export function PitchCanvas({ stageRef }: { stageRef: RefObject<Konva.Stage | nu
   const beginAreaResize = (drawing: Drawing, handle: AreaResizeHandle, event: Konva.KonvaEventObject<MouseEvent | TouchEvent>) => {
     event.cancelBubble = true;
     checkpointHistory();
-    setAreaResize({ drawing: { ...drawing, points: [...drawing.points] }, handle, bounds: areaResizeBounds(drawing, mapper) });
+    areaResizeRef.current = { drawing: { ...drawing, points: [...drawing.points] }, handle, bounds: areaResizeBounds(drawing, mapper) };
     setSelectionBox(null);
+    const stage = event.target.getStage();
+    if (stage) stage.container().style.cursor = areaHandleCursors[handle];
   };
-  const resizeAreaAt = (stage: Konva.Stage) => {
-    if (!areaResize) return;
-    const pointer = stage.getPointerPosition();
-    if (!pointer) return;
-    const rel = mapper.toRel(pointer.x / scale, pointer.y / scale);
+  const resizeAreaAt = (rel: { x: number; y: number }, session: AreaResizeSession) => {
     const minWidth = Math.max(0.025, 34 / mapper.pitch.width);
     const minHeight = Math.max(0.025, 34 / mapper.pitch.height);
-    const { drawing, handle, bounds } = areaResize;
+    const { drawing, handle, bounds } = session;
 
     if (drawing.type === 'circle-zone') {
       const centerX = (bounds.x1 + bounds.x2) / 2;
       const centerY = (bounds.y1 + bounds.y2) / 2;
       const dx = (rel.x - centerX) * mapper.pitch.width;
       const dy = (rel.y - centerY) * mapper.pitch.height;
-      const radiusPixels = Math.max(22, Math.hypot(dx, dy));
+      const radiusPixels = Math.max(22, Math.max(Math.abs(dx), Math.abs(dy)));
       const maxRadiusPixels = Math.max(22, Math.min(
         centerX * mapper.pitch.width,
         (1 - centerX) * mapper.pitch.width,
@@ -1161,9 +1177,30 @@ export function PitchCanvas({ stageRef }: { stageRef: RefObject<Konva.Stage | nu
     });
     updateDrawing(drawing.id, { points, followPlayers: false });
   };
+  const queueAreaResizeAt = (stage: Konva.Stage, immediate = false) => {
+    const session = areaResizeRef.current;
+    const pointer = stage.getPointerPosition();
+    if (!session || !pointer) return;
+    const rel = mapper.toRel(pointer.x / scale, pointer.y / scale);
+    if (immediate) {
+      if (areaResizeFrameRef.current !== null) cancelAnimationFrame(areaResizeFrameRef.current);
+      areaResizeFrameRef.current = null;
+      pendingAreaResizeRef.current = null;
+      resizeAreaAt(rel, session);
+      return;
+    }
+    pendingAreaResizeRef.current = rel;
+    if (areaResizeFrameRef.current !== null) return;
+    areaResizeFrameRef.current = requestAnimationFrame(() => {
+      areaResizeFrameRef.current = null;
+      const pending = pendingAreaResizeRef.current;
+      const activeSession = areaResizeRef.current;
+      if (pending && activeSession) resizeAreaAt(pending, activeSession);
+    });
+  };
   const moveAt = (stage: Konva.Stage) => {
-    if (areaResize) {
-      resizeAreaAt(stage);
+    if (areaResizeRef.current) {
+      queueAreaResizeAt(stage);
       return;
     }
     const rel = pointerRel(stage);
@@ -1178,9 +1215,9 @@ export function PitchCanvas({ stageRef }: { stageRef: RefObject<Konva.Stage | nu
     });
   };
   const finishAt = (stage: Konva.Stage) => {
-    if (areaResize) {
-      resizeAreaAt(stage);
-      setAreaResize(null);
+    if (areaResizeRef.current) {
+      queueAreaResizeAt(stage, true);
+      areaResizeRef.current = null;
       stage.container().style.cursor = 'default';
       return;
     }
@@ -1294,7 +1331,9 @@ export function PitchCanvas({ stageRef }: { stageRef: RefObject<Konva.Stage | nu
           onMouseMove={(e) => {
             const stage = e.target.getStage();
             if (!stage) return;
-            if (e.target === stage && !canDraw) stage.container().style.cursor = 'default';
+            const resizeSession = areaResizeRef.current;
+            if (resizeSession) stage.container().style.cursor = areaHandleCursors[resizeSession.handle];
+            else if (e.target === stage && !canDraw) stage.container().style.cursor = 'default';
             moveAt(stage);
           }}
           onMouseUp={(e) => { const stage = e.target.getStage(); if (stage) finishAt(stage); }}
