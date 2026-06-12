@@ -66,17 +66,20 @@ npm run build
 
 ## Usage Guide
 
-1. Use the left sidebar to rename teams, edit shirt numbers and player labels, add players, and apply formations.
+1. Use the bottom dock tabs to edit the page, squads, preset teams, selected players, scenes, and exports.
 2. Drag markers and the ball on the central pitch.
-3. Pick a tool from the floating toolbar:
+3. Pick a tool from the dock:
    - Select
    - Pass arrow
+   - Long pass
    - Run / curved dashed arrow
-   - Highlight zone
+   - Straight dashed line
+   - Rectangle or circle area
+   - Big or small goals and cones
    - Text
-   - Eraser placeholder
-4. Use the right sidebar to change pitch styling, selected player colors/opacity, selected drawing styles, and exports.
-5. Use the bottom timeline to capture scenes, duplicate scenes, delete scenes, and restore captured tactical states.
+4. Upload a custom badge from the Edit tab, or hide preset flags from Page or Preset teams.
+5. Select three or more players and use Style to create an area that follows them or stays fixed.
+6. Use Scenes to capture, duplicate, delete, restore, preview, and export tactical states.
 
 ## Export Notes
 
@@ -92,4 +95,4 @@ The application is structured for staged delivery:
 1. Pitch, player markers, formations, dragging, ball, and drawing tools.
 2. Scene capture, duplication, timeline controls, local project saving, and exports.
 3. Advanced animation interpolation, curved movement paths, camera crops, drawing reveals, and FFmpeg.wasm MP4/GIF rendering.
-4. CSV/JSON squad import, reusable team presets, uploaded photos/badges, advanced layer grouping, and collaborative template libraries.
+4. CSV/JSON squad import, advanced layer grouping, and collaborative template libraries.
