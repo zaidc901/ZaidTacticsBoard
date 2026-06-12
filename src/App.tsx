@@ -38,19 +38,6 @@ function interpolateScene(from: Scene, to: Scene, progress: number): PlaybackFra
   };
 }
 
-function collapsedPoints(drawing: Drawing) {
-  if (drawing.type === 'zone') {
-    const [x, y, width, height] = drawing.points;
-    return [x + width / 2, y + height / 2, 0, 0];
-  }
-  if (drawing.points.length < 4) return [...drawing.points];
-  const xs = drawing.points.filter((_, index) => index % 2 === 0);
-  const ys = drawing.points.filter((_, index) => index % 2 === 1);
-  const centerX = xs.reduce((sum, value) => sum + value, 0) / xs.length;
-  const centerY = ys.reduce((sum, value) => sum + value, 0) / ys.length;
-  return drawing.points.map((_, index) => index % 2 === 0 ? centerX : centerY);
-}
-
 function parseColor(value?: string) {
   if (!value) return undefined;
   const hex = value.trim().match(/^#([\da-f]{3}|[\da-f]{4}|[\da-f]{6}|[\da-f]{8})$/i)?.[1];
@@ -97,8 +84,10 @@ function interpolateDrawings(from: Drawing[], to: Drawing[], progress: number): 
     if (opacity < 0.01) return [];
     const compatible = (!entry.from || !entry.to || entry.from.type === entry.to.type)
       && (entry.from?.points.length ?? entry.to?.points.length) === (entry.to?.points.length ?? entry.from?.points.length);
-    const startPoints = entry.from?.points ?? (entry.to ? collapsedPoints(entry.to) : base.points);
-    const endPoints = entry.to?.points ?? (entry.from ? collapsedPoints(entry.from) : base.points);
+    // Entering and exiting objects fade at their real size. Collapsing their
+    // geometry made minimum-sized props appear, then visibly grow mid-fade.
+    const startPoints = entry.from?.points ?? base.points;
+    const endPoints = entry.to?.points ?? base.points;
     const points = compatible
       ? startPoints.map((point, index) => point + (endPoints[index] - point) * progress)
       : [...base.points];
@@ -177,8 +166,11 @@ export default function App() {
   return <div className={`tactics-shell flex h-screen h-[100dvh] overflow-hidden ${dockPosition === 'right' ? 'flex-row' : 'flex-col'} ${dark ? 'tactics-dark bg-slate-950 text-slate-100' : 'bg-[#f6f9ff] text-[#0b172a]'}`}>
     <main className="relative min-h-0 min-w-0 flex-1 overflow-hidden">
       <PitchCanvas stageRef={stageRef} />
-      <div className="pointer-events-none absolute bottom-3 left-3 z-40 flex items-center gap-2"><DockModeSwitcher /><PitchScaleControl /></div>
-      <div className="pointer-events-none absolute bottom-3 right-3 z-40"><QuickActions /></div>
+      {dockPosition === 'hidden' && <div className="pointer-events-none absolute bottom-3 left-1/2 z-40 flex max-w-[calc(100%-1.5rem)] -translate-x-1/2 flex-wrap items-center justify-center gap-2">
+        <DockModeSwitcher />
+        <PitchScaleControl />
+        <QuickActions />
+      </div>}
     </main>
     {dockPosition !== 'hidden' && <ControlDock onExportImage={exportImage} onPreviewAnimation={() => { void playScenes(); }} onExportVideo={exportVideo} />}
   </div>;

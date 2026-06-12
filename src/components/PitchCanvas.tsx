@@ -4,20 +4,12 @@ import { Stage, Layer, Rect, Line, Circle, Text, Group, Arrow, Image as KonvaIma
 import Konva from 'konva';
 import { flagImageUrlByPresetId, teamPresetById } from '../data/teamPresets';
 import { useTacticsStore } from '../store/tacticsStore';
-import { Ball, BallDesign, Drawing, FillPattern, PlaybackDrawing, Player, Team, ToolStyle } from '../types/domain';
+import { Ball, BallDesign, Drawing, FillPattern, PlaybackDrawing, Player, ToolStyle } from '../types/domain';
 
 const pitchMargin = 56;
-const markerRadius = 24;
+const baseMarkerRadius = 24;
 const clamp01 = (n: number) => Math.max(0, Math.min(1, n));
 const clampRange = (n: number, min: number, max: number) => Math.max(min, Math.min(max, n));
-
-function isPointOverTeamBench(teamId: string, clientX: number, clientY: number) {
-  return Array.from(document.querySelectorAll<HTMLElement>('[data-bench-team-id]')).some(element => {
-    if (element.dataset.benchTeamId !== teamId) return false;
-    const rect = element.getBoundingClientRect();
-    return clientX >= rect.left && clientX <= rect.right && clientY >= rect.top && clientY <= rect.bottom;
-  });
-}
 
 const imageCache = new Map<string, HTMLImageElement | 'error'>();
 
@@ -77,14 +69,6 @@ function coverCrop(image: HTMLImageElement) {
   }
   const height = image.width / targetRatio;
   return { x: 0, y: (image.height - height) / 2, width: image.width, height };
-}
-
-function flagCssBackground(flagId: string) {
-  const preset = teamPresetById[flagId] ?? teamPresetById.iraq;
-  const direction = preset.flagDirection === 'vertical' ? '90deg' : '180deg';
-  const step = 100 / preset.flagBands.length;
-  const stops = preset.flagBands.flatMap((color, index) => [`${color} ${index * step}%`, `${color} ${(index + 1) * step}%`]).join(', ');
-  return `linear-gradient(${direction}, ${stops})`;
 }
 
 function makeMapper(width: number, height: number, scaleX: number, scaleY: number, landscape: boolean): Mapper {
@@ -270,59 +254,34 @@ function CustomBadge({ url, radius }: { url: string; radius: number }) {
   </Group>;
 }
 
+function readableTextColor(background: string) {
+  const hex = background.match(/^#([\da-f]{6})$/i)?.[1];
+  if (!hex) return '#0b172a';
+  const red = Number.parseInt(hex.slice(0, 2), 16);
+  const green = Number.parseInt(hex.slice(2, 4), 16);
+  const blue = Number.parseInt(hex.slice(4, 6), 16);
+  return red * 0.299 + green * 0.587 + blue * 0.114 > 155 ? '#0b172a' : '#ffffff';
+}
+
 function PlayerMarker({ player, mapper }: { player: Player; mapper: Mapper }) {
-  const { selectedIds, toggleSelection, moveSelectedItems, playing, setPlayerStarter } = useTacticsStore();
+  const { selectedIds, playing } = useTacticsStore();
   const team = useTacticsStore(state => state.project.teams.find(item => item.id === player.teamId));
   const selectionColor = useTacticsStore(state => state.project.settings.selectionColor ?? '#facc15');
-  const dragRef = useRef<{ ids: string[]; x: number; y: number } | null>(null);
   const [x, y] = mapper.toAbs(player.x, player.y);
   const selected = !playing && selectedIds.includes(player.id);
-  const labelWidth = 108;
+  const markerRadius = baseMarkerRadius * clampRange(player.size ?? 1, 0.65, 1.65);
+  const labelWidth = Math.max(88, 108 * clampRange(player.size ?? 1, 0.65, 1.65));
   const hasName = (team?.showNames ?? true) && player.displayName.trim().length > 0;
   const displayName = player.displayName.length > 14 ? `${player.displayName.slice(0, 13)}.` : player.displayName;
+  const nameBackground = player.nameBackground ?? '#ffffff';
+  const nameTextColor = readableTextColor(nameBackground);
   const badgeImage = team?.badge;
   const showPresetBadge = team?.showBadge ?? true;
   const hasBadge = Boolean(badgeImage || (showPresetBadge && player.flag));
   if (player.hidden || !player.starter) return null;
 
-  const startDrag = (e: Konva.KonvaEventObject<DragEvent>) => {
-    e.cancelBubble = true;
-    const state = useTacticsStore.getState();
-    const selected = state.selectedIds.includes(player.id) ? state.selectedIds : [player.id];
-    if (!state.selectedIds.includes(player.id)) state.select(player.id);
-    const node = e.currentTarget as Konva.Group;
-    dragRef.current = { ids: selected, x: node.x(), y: node.y() };
-  };
-
-  return <Group name="board-item" x={x} y={y} draggable={!player.locked && !playing} dragDistance={5}
-    onClick={event => {
-      event.cancelBubble = true;
-      const native = event.evt as MouseEvent;
-      if (native.button !== 0) return;
-      if (native.ctrlKey || native.metaKey) toggleSelection(player.id);
-      else useTacticsStore.getState().select(player.id);
-    }}
-    onTap={event => { event.cancelBubble = true; useTacticsStore.getState().select(player.id); }}
-    onMouseMove={(e) => { const stage = e.target.getStage(); if (stage && !playing) stage.container().style.cursor = 'grab'; }}
-    onDragStart={(e) => { const stage = e.target.getStage(); if (stage) stage.container().style.cursor = 'grabbing'; startDrag(e); }}
-    onDragEnd={(e) => {
-      const drag = dragRef.current;
-      if (!drag) return;
-      const node = e.currentTarget as Konva.Group;
-      const dx = (node.x() - drag.x) / mapper.pitch.width;
-      const dy = (node.y() - drag.y) / mapper.pitch.height;
-      node.position({ x: drag.x, y: drag.y });
-      if (dx || dy) moveSelectedItems(drag.ids, dx, dy);
-      const stage = e.target.getStage();
-      const pointer = stage?.getPointerPosition();
-      if (stage && pointer) {
-        const rect = stage.container().getBoundingClientRect();
-        if (isPointOverTeamBench(player.teamId, rect.left + pointer.x, rect.top + pointer.y)) setPlayerStarter(player.id, false);
-      }
-      dragRef.current = null;
-      if (stage) stage.container().style.cursor = 'grab';
-    }}>
-    <Group listening={false}>
+  return <Group id={`player-node-${player.id}`} x={x} y={y} listening={false}>
+    <Group>
       {selected && <Circle radius={markerRadius + 13} fill={selectionColor} opacity={0.22} stroke={selectionColor} strokeWidth={4} />}
       <Circle radius={markerRadius + 4} fill="#f8fbff" opacity={0.96} shadowBlur={12} shadowColor="#9bb7de" />
       <Circle radius={markerRadius} fill={player.color} stroke={selected ? '#2563eb' : player.outline} strokeWidth={selected ? 4 : 2.4} shadowBlur={8} shadowColor="#64748b" opacity={player.opacity} />
@@ -330,11 +289,10 @@ function PlayerMarker({ player, mapper }: { player: Player; mapper: Mapper }) {
       {badgeImage && <CustomBadge url={badgeImage} radius={markerRadius} />}
       {(team?.showNumbers ?? true) && (player.showNumber ?? true) && <Text text={String(player.number)} width={markerRadius * 2} x={-markerRadius} y={-10} align="center" fill={hasBadge ? '#07111f' : '#ffffff'} fontFamily="Inter, Arial, sans-serif" fontStyle="bold" fontSize={18} shadowColor={hasBadge ? '#ffffff' : '#0b172a'} shadowBlur={5} shadowOpacity={0.92} />}
       {hasName && <Group x={-labelWidth / 2} y={markerRadius + 6} opacity={player.opacity}>
-        <Rect width={labelWidth} height={25} fill="#ffffff" stroke={selected ? '#2563eb' : '#c7d8ee'} strokeWidth={1.4} cornerRadius={7} shadowBlur={6} shadowColor="#dbeafe" />
-        <Text text={displayName} width={labelWidth} height={25} align="center" verticalAlign="middle" fill="#0b172a" fontFamily="Inter, Arial, sans-serif" fontSize={12} fontStyle="bold" />
+        <Rect width={labelWidth} height={25} fill={nameBackground} stroke={selected ? '#2563eb' : '#c7d8ee'} strokeWidth={1.4} cornerRadius={7} shadowBlur={6} shadowColor="#0b172a" shadowOpacity={0.18} />
+        <Text text={displayName} width={labelWidth} height={25} align="center" verticalAlign="middle" fill={nameTextColor} fontFamily="Inter, Arial, sans-serif" fontSize={12} fontStyle="bold" />
       </Group>}
     </Group>
-    <Circle radius={markerRadius + 16} fill="#ffffff" opacity={0.001} />
   </Group>;
 }
 
@@ -643,16 +601,13 @@ function MannequinFigure({ x, y, width, height, fill, stroke }: { x: number; y: 
   </Group>;
 }
 
-function isAreaDrawing(drawing: Drawing) {
-  return drawing.type === 'zone' || drawing.type === 'circle-zone' || drawing.type === 'polygon-zone';
-}
-
 function DrawingShape({ drawing, mapper, interactive = true }: { drawing: Drawing; mapper: Mapper; interactive?: boolean }) {
   const { select, toggleSelection, selectedIds, moveSelectedItems } = useTacticsStore();
   const pitchLineColor = useTacticsStore(state => state.project.settings.lineColor);
   const pitchLineWidth = useTacticsStore(state => state.project.settings.lineThickness);
   const dragRef = useRef<{ ids: string[]; x: number; y: number } | null>(null);
   const selected = interactive && selectedIds.includes(drawing.id);
+  const stageManaged = drawing.type === 'zone' || drawing.type === 'circle-zone' || drawing.type === 'polygon-zone';
   if (drawing.hidden) return null;
   const onSelect = interactive ? (e: Konva.KonvaEventObject<MouseEvent | TouchEvent>) => {
     e.cancelBubble = true;
@@ -665,8 +620,8 @@ function DrawingShape({ drawing, mapper, interactive = true }: { drawing: Drawin
     name: 'board-item',
     onClick: onSelect,
     onTap: onSelect,
-    listening: interactive,
-    draggable: interactive && !drawing.locked,
+    listening: interactive && !stageManaged,
+    draggable: interactive && !stageManaged && !drawing.locked,
     dragDistance: 5,
     onMouseMove: (event: Konva.KonvaEventObject<MouseEvent>) => {
       const stage = event.target.getStage();
@@ -716,7 +671,7 @@ function DrawingShape({ drawing, mapper, interactive = true }: { drawing: Drawin
           {selected && <Rect x={-2} y={-2} width={absWidth + 4} height={absHeight + 4} stroke={selectionStroke} strokeWidth={1.5} opacity={0.5} dash={[7, 6]} cornerRadius={12} />}
           <Rect width={absWidth} height={absHeight} stroke={stroke} strokeWidth={drawing.strokeWidth} opacity={Math.max(0.72, drawing.opacity)} dash={drawing.dashed ? [14, 10] : undefined} cornerRadius={10} />
         </Group>
-        <Rect key="area-hit-target" x={-20} y={-20} width={absWidth + 40} height={absHeight + 40} fill="#ffffff" opacity={0.001} cornerRadius={22} />
+        <Rect key="area-hit-target" name="area-hit-target" x={-20} y={-20} width={absWidth + 40} height={absHeight + 40} fill="#ffffff" opacity={0.001} cornerRadius={22} />
       </Group>
     </>;
   }
@@ -736,7 +691,7 @@ function DrawingShape({ drawing, mapper, interactive = true }: { drawing: Drawin
           {selected && <Circle radius={radius + 2} stroke={selectionStroke} strokeWidth={1.5} opacity={0.5} dash={[7, 6]} />}
           <Circle radius={radius} stroke={stroke} strokeWidth={drawing.strokeWidth} opacity={Math.max(0.72, drawing.opacity)} dash={drawing.dashed ? [14, 10] : undefined} />
         </Group>
-        <Circle key="area-hit-target" radius={radius + 20} fill="#ffffff" opacity={0.001} />
+        <Circle key="area-hit-target" name="area-hit-target" radius={radius + 20} fill="#ffffff" opacity={0.001} />
       </Group>
     </>;
   }
@@ -822,7 +777,7 @@ function DrawingShape({ drawing, mapper, interactive = true }: { drawing: Drawin
           {selected && <Line points={localPoints} closed stroke={selectionStroke} strokeWidth={drawing.strokeWidth + 3} opacity={0.38} dash={[7, 6]} lineJoin="round" />}
           <Line points={localPoints} closed stroke={stroke} strokeWidth={drawing.strokeWidth} opacity={Math.max(0.72, drawing.opacity)} dash={drawing.dashed ? [14, 10] : undefined} lineJoin="round" />
         </Group>
-        <Line key="area-hit-target" points={localPoints} closed fill="#ffffff" stroke="#ffffff" opacity={0.001} strokeWidth={40} lineJoin="round" />
+        <Line key="area-hit-target" name="area-hit-target" points={localPoints} closed fill="#ffffff" stroke="#ffffff" opacity={0.001} strokeWidth={40} hitStrokeWidth={40} lineJoin="round" />
       </Group>
     </>;
   }
@@ -873,62 +828,6 @@ function DrawingShape({ drawing, mapper, interactive = true }: { drawing: Drawin
     <Line points={[start[0], start[1], end[0], end[1]]} stroke="#ffffff" strokeWidth={drawing.strokeWidth + 34} opacity={0.01} />
     {selected && <Arrow points={[start[0], start[1], shortened[0], shortened[1], end[0], end[1]]} pointerLength={17} pointerWidth={17} lineCap="round" lineJoin="round" stroke={selectionStroke} fill={selectionStroke} strokeWidth={drawing.strokeWidth + 6} opacity={0.42} />}
     <Arrow points={[start[0], start[1], shortened[0], shortened[1], end[0], end[1]]} pointerLength={14} pointerWidth={14} lineCap="round" lineJoin="round" stroke={stroke} fill={stroke} strokeWidth={drawing.strokeWidth} dash={drawing.dashed ? [16, 10] : undefined} shadowBlur={8} shadowColor={drawing.color} />
-  </Group>;
-}
-
-type AreaResizeHandle = 'nw' | 'n' | 'ne' | 'e' | 'se' | 's' | 'sw' | 'w';
-type AreaResizeSession = {
-  drawing: Drawing;
-  handle: AreaResizeHandle;
-  bounds: { x1: number; y1: number; x2: number; y2: number };
-};
-
-const areaHandleCursors: Record<AreaResizeHandle, string> = {
-  nw: 'nwse-resize', n: 'ns-resize', ne: 'nesw-resize', e: 'ew-resize',
-  se: 'nwse-resize', s: 'ns-resize', sw: 'nesw-resize', w: 'ew-resize',
-};
-
-function areaResizeBounds(drawing: Drawing, mapper: Mapper) {
-  if (drawing.type !== 'circle-zone') return drawingBounds(drawing);
-  const start = mapper.toAbs(drawing.points[0], drawing.points[1]);
-  const end = mapper.toAbs(drawing.points[2], drawing.points[3]);
-  const centerX = (start[0] + end[0]) / 2;
-  const centerY = (start[1] + end[1]) / 2;
-  const radius = Math.max(8, Math.hypot(end[0] - start[0], end[1] - start[1]) / 2);
-  const topLeft = mapper.toRel(centerX - radius, centerY - radius);
-  const bottomRight = mapper.toRel(centerX + radius, centerY + radius);
-  return { x1: topLeft.x, y1: topLeft.y, x2: bottomRight.x, y2: bottomRight.y };
-}
-
-function AreaResizeControls({ drawing, mapper, onResizeStart }: { drawing: Drawing; mapper: Mapper; onResizeStart: (drawing: Drawing, handle: AreaResizeHandle, event: Konva.KonvaEventObject<MouseEvent | TouchEvent>) => void }) {
-  const bounds = areaResizeBounds(drawing, mapper);
-  const [x1, y1] = mapper.toAbs(bounds.x1, bounds.y1);
-  const [x2, y2] = mapper.toAbs(bounds.x2, bounds.y2);
-  const width = Math.max(1, x2 - x1);
-  const height = Math.max(1, y2 - y1);
-  const positions: Record<AreaResizeHandle, [number, number]> = {
-    nw: [x1, y1], n: [x1 + width / 2, y1], ne: [x2, y1], e: [x2, y1 + height / 2],
-    se: [x2, y2], s: [x1 + width / 2, y2], sw: [x1, y2], w: [x1, y1 + height / 2],
-  };
-  const handles: AreaResizeHandle[] = drawing.type === 'circle-zone'
-    ? ['nw', 'ne', 'se', 'sw']
-    : ['nw', 'n', 'ne', 'e', 'se', 's', 'sw', 'w'];
-
-  return <Group name="area-controls">
-    {drawing.type === 'circle-zone'
-      ? <Circle x={x1 + width / 2} y={y1 + height / 2} radius={width / 2} stroke="#2563eb" strokeWidth={2.5} dash={[9, 7]} listening={false} />
-      : <Rect x={x1} y={y1} width={width} height={height} stroke="#2563eb" strokeWidth={2.5} dash={[9, 7]} cornerRadius={drawing.type === 'zone' ? 10 : 3} listening={false} />}
-    {handles.map(handle => {
-      const [x, y] = positions[handle];
-      return <Group key={handle} x={x} y={y}
-        onMouseDown={event => onResizeStart(drawing, handle, event)}
-        onTouchStart={event => onResizeStart(drawing, handle, event)}
-        onMouseEnter={event => { const stage = event.target.getStage(); if (stage) stage.container().style.cursor = areaHandleCursors[handle]; }}
-        onMouseLeave={event => { const stage = event.target.getStage(); if (stage) stage.container().style.cursor = 'default'; }}>
-        <Circle radius={28} fill="#ffffff" opacity={0.001} />
-        <Rect x={-11} y={-11} width={22} height={22} cornerRadius={6} fill="#ffffff" stroke="#1d4ed8" strokeWidth={3} shadowColor="#0f172a" shadowBlur={5} shadowOpacity={0.2} />
-      </Group>;
-    })}
   </Group>;
 }
 
@@ -1003,47 +902,107 @@ function intersects(a: { x1: number; y1: number; x2: number; y2: number }, b: { 
   return a.x1 <= b.x2 && a.x2 >= b.x1 && a.y1 <= b.y2 && a.y2 >= b.y1;
 }
 
-function TeamBenchBar({ team, side, dropActive = false }: { team: Team; side: 'left' | 'right'; dropActive?: boolean }) {
-  const { project, selectedId, addPlayer, select, setPlayerStarter, checkpointHistory } = useTacticsStore();
-  const dark = project.settings.theme === 'dark';
-  const showTeamBadge = team.showBadge ?? true;
-  const bench = team.squad.filter(player => !player.starter);
-  return <aside data-bench-team-id={team.id} onDragOver={e => e.preventDefault()} onDrop={e => { const playerId = e.dataTransfer.getData('text/player-id'); if (playerId) { checkpointHistory(); setPlayerStarter(playerId, false); } }} className={`flex h-full w-56 max-w-[42vw] shrink-0 flex-col gap-2 rounded-xl border p-3 shadow-[0_18px_46px_rgba(11,23,42,.10)] backdrop-blur transition-all ${dropActive ? 'border-emerald-400 bg-emerald-400/12 ring-4 ring-emerald-400/25' : dark ? 'border-slate-700 bg-slate-950/90 text-slate-100' : 'border-[#d7e5f6] bg-white/88 text-[#0b172a]'}`}>
-    <div className={`flex items-center gap-2 ${side === 'right' ? 'flex-row-reverse text-right' : ''}`}>
-      <span className="h-7 w-2 rounded-full" style={{ background: team.primaryColor }} />
-      <div className="min-w-0 flex-1">
-        <p className="truncate text-[11px] font-black uppercase tracking-[0.16em] text-[#2563eb]">{team.shortName}</p>
-        <p className={`truncate text-xs font-black ${dark ? 'text-slate-100' : 'text-[#0b172a]'}`}>Bench</p>
-      </div>
-    </div>
-    <button onClick={() => addPlayer(team.id)} className="rounded-lg bg-[#2563eb] px-2 py-1.5 text-xs font-black text-white">Add player</button>
-    <div className="min-h-0 flex-1 space-y-1.5 overflow-y-auto">
-      {bench.length === 0 && <div className={`rounded-lg border border-dashed px-2 py-6 text-center text-[11px] font-semibold ${dark ? 'border-slate-700 bg-slate-950 text-slate-400' : 'border-[#d7e5f6] bg-[#f8fbff] text-slate-500'}`}>Drop players here</div>}
-      {bench.map(player => {
-        const selected = selectedId === player.id;
-        return <button key={player.id} draggable title="Click to select or drag onto the pitch" onDragStart={e => e.dataTransfer.setData('text/player-id', player.id)} onClick={() => select(player.id)} className={`relative flex w-full items-center gap-2 rounded-lg border px-2 py-2 text-left transition ${selected ? dark ? 'border-blue-400 bg-blue-500/20 ring-2 ring-blue-400/45 shadow-[0_8px_20px_rgba(37,99,235,.18)]' : 'border-[#2563eb] bg-[#eff6ff] ring-2 ring-[#2563eb]/40 shadow-[0_8px_20px_rgba(37,99,235,.12)]' : dark ? 'border-slate-700 bg-slate-900 hover:border-slate-500 hover:bg-slate-800' : 'border-[#d7e5f6] bg-white hover:border-[#93c5fd] hover:bg-[#eff6ff]'}`}>
-        <span className="relative grid h-7 w-7 shrink-0 place-items-center overflow-hidden rounded-full text-[10px] font-black text-[#07111f]" style={{ background: showTeamBadge && player.flag ? '#ffffff' : player.color }}>
-          {showTeamBadge && player.flag && !team.badge && <span className="absolute inset-0" style={{ background: flagCssBackground(player.flag) }} />}
-          {showTeamBadge && player.flag && !team.badge && <img src={flagImageUrlByPresetId[player.flag]} alt="" className="absolute inset-0 h-full w-full object-cover" loading="lazy" draggable={false} onError={event => { event.currentTarget.style.display = 'none'; }} />}
-          {team.badge && <img src={team.badge} alt="" className="absolute inset-0 h-full w-full object-cover" draggable={false} />}
-          {(team.badge || (showTeamBadge && player.flag)) && <span className="absolute inset-0 bg-white/10" />}
-          {(team.showNumbers ?? true) && (player.showNumber ?? true) && <span className={`relative ${team.badge || (showTeamBadge && player.flag) ? 'drop-shadow-[0_1px_2px_rgba(255,255,255,.95)]' : 'text-white'}`}>{player.number}</span>}
-        </span>
-        <span className={`min-w-0 flex-1 truncate text-[11px] font-black ${dark ? 'text-slate-100' : 'text-[#0b172a]'}`}>{(team.showNames ?? true) && player.displayName.trim() ? player.displayName.trim() : `#${player.number}`}</span>
-        {selected && <span className="shrink-0 rounded-md bg-[#2563eb] px-1.5 py-1 text-[8px] font-black uppercase tracking-[0.08em] text-white">Selected</span>}
-      </button>})}
-    </div>
-  </aside>;
+function pointInPolygon(x: number, y: number, points: number[]) {
+  let inside = false;
+  for (let index = 0, previous = points.length - 2; index < points.length; previous = index, index += 2) {
+    const x1 = points[index];
+    const y1 = points[index + 1];
+    const x2 = points[previous];
+    const y2 = points[previous + 1];
+    if ((y1 > y) !== (y2 > y) && x < ((x2 - x1) * (y - y1)) / (y2 - y1 || 1) + x1) inside = !inside;
+  }
+  return inside;
+}
+
+function pointHitsArea(drawing: Drawing, rel: { x: number; y: number }, mapper: Mapper) {
+  if (drawing.hidden) return false;
+  const padX = 8 / mapper.pitch.width;
+  const padY = 8 / mapper.pitch.height;
+  if (drawing.type === 'zone') {
+    const [x, y, width, height] = drawing.points;
+    return rel.x >= x - padX && rel.x <= x + width + padX && rel.y >= y - padY && rel.y <= y + height + padY;
+  }
+  if (drawing.type === 'circle-zone') {
+    const pointer = mapper.toAbs(rel.x, rel.y);
+    const start = mapper.toAbs(drawing.points[0], drawing.points[1]);
+    const end = mapper.toAbs(drawing.points[2], drawing.points[3]);
+    const centerX = (start[0] + end[0]) / 2;
+    const centerY = (start[1] + end[1]) / 2;
+    const radius = Math.hypot(end[0] - start[0], end[1] - start[1]) / 2 + 8;
+    return Math.hypot(pointer[0] - centerX, pointer[1] - centerY) <= radius;
+  }
+  return drawing.type === 'polygon-zone' && pointInPolygon(rel.x, rel.y, drawing.points);
+}
+
+type BoardDragSession = {
+  ids: string[];
+  start: { x: number; y: number };
+  moved: boolean;
+};
+
+type BoardDragPreview = {
+  ids: string[];
+  dx: number;
+  dy: number;
+};
+
+function previewTranslatedDrawing(drawing: Drawing, dx: number, dy: number) {
+  const points = drawing.points.slice();
+  if (drawing.type === 'zone') {
+    const width = points[2] ?? 0;
+    const height = points[3] ?? 0;
+    points[0] = clampRange(points[0] + dx, 0, Math.max(0, 1 - width));
+    points[1] = clampRange(points[1] + dy, 0, Math.max(0, 1 - height));
+    return { ...drawing, points };
+  }
+  const xs = points.filter((_, index) => index % 2 === 0);
+  const ys = points.filter((_, index) => index % 2 === 1);
+  const safeDx = clampRange(dx, -Math.min(...xs), 1 - Math.max(...xs));
+  const safeDy = clampRange(dy, -Math.min(...ys), 1 - Math.max(...ys));
+  for (let index = 0; index < points.length; index += 2) {
+    points[index] += safeDx;
+    points[index + 1] += safeDy;
+  }
+  return { ...drawing, points, followPlayers: drawing.type === 'polygon-zone' ? false : drawing.followPlayers };
+}
+
+function ManagedBoardHitTargets({ players, drawings, mapper }: { players: Player[]; drawings: Drawing[]; mapper: Mapper }) {
+  return <>
+    {drawings.filter(drawing => !drawing.hidden).map(drawing => {
+      if (drawing.type === 'zone') {
+        const [x, y, width, height] = drawing.points;
+        const start = mapper.toAbs(x, y);
+        const end = mapper.toAbs(x + width, y + height);
+        return <Rect key={drawing.id} x={Math.min(start[0], end[0])} y={Math.min(start[1], end[1])} width={Math.abs(end[0] - start[0])} height={Math.abs(end[1] - start[1])} fill="#ffffff" opacity={0.001} />;
+      }
+      if (drawing.type === 'circle-zone') {
+        const start = mapper.toAbs(drawing.points[0], drawing.points[1]);
+        const end = mapper.toAbs(drawing.points[2], drawing.points[3]);
+        return <Circle key={drawing.id} x={(start[0] + end[0]) / 2} y={(start[1] + end[1]) / 2} radius={Math.hypot(end[0] - start[0], end[1] - start[1]) / 2} fill="#ffffff" opacity={0.001} />;
+      }
+      if (drawing.type === 'polygon-zone') {
+        const points = drawing.points.flatMap((point, index, all) => index % 2 === 0 ? mapper.toAbs(point, all[index + 1]) : []);
+        return <Line key={drawing.id} points={points} closed fill="#ffffff" opacity={0.001} />;
+      }
+      return null;
+    })}
+    {players.filter(player => player.starter && !player.hidden).map(player => {
+      const [x, y] = mapper.toAbs(player.x, player.y);
+      const radius = baseMarkerRadius * clampRange(player.size ?? 1, 0.65, 1.65) + 5;
+      return <Circle key={player.id} x={x} y={y} radius={radius} fill="#ffffff" opacity={0.001} />;
+    })}
+  </>;
 }
 
 export function PitchCanvas({ stageRef }: { stageRef: RefObject<Konva.Stage | null> }) {
-  const { project, tool, toolStyle, viewZoom, squadBarsOpen, dockPosition, playbackFrame, playing, selectedIds, addDrawing, updateDrawing, placePlayer, select, setSelection, checkpointHistory, setTool, setDockTab, setDockPosition } = useTacticsStore();
+  const { project, tool, toolStyle, viewZoom, dockPosition, playbackFrame, playing, addDrawing, placePlayer, select, toggleSelection, setSelection, checkpointHistory, moveSelectedItems, setTool, setDockTab, setDockPosition } = useTacticsStore();
   const [draft, setDraft] = useState<{ id: string; start: number[]; current: number[] } | null>(null);
   const [selection, setSelectionBox] = useState<{ start: number[]; current: number[] } | null>(null);
-  const [areaResize, setAreaResize] = useState<AreaResizeSession | null>(null);
+  const [boardDragPreview, setBoardDragPreview] = useState<BoardDragPreview | null>(null);
   const [shareDone, setShareDone] = useState(false);
   const pointerFrameRef = useRef<number | null>(null);
   const pendingPointerRef = useRef<{ x: number; y: number } | null>(null);
+  const boardDragRef = useRef<BoardDragSession | null>(null);
   const { ref: containerRef, size } = useElementSize<HTMLDivElement>();
   const { width, height, format } = project.settings;
   const dark = project.settings.theme === 'dark';
@@ -1065,17 +1024,38 @@ export function PitchCanvas({ stageRef }: { stageRef: RefObject<Konva.Stage | nu
   };
   const canDraw = tool !== 'select';
   const boardInteractive = !canDraw && !playing;
-  const displayDrawings = playbackFrame?.drawings ?? project.drawings;
-  const sortedDrawings = displayDrawings.slice().sort((a, b) => a.zIndex - b.zIndex);
-  const selectedAreas = boardInteractive ? sortedDrawings.filter(drawing => selectedIds.includes(drawing.id) && isAreaDrawing(drawing)) : [];
   const displayBall = playbackFrame?.ball ?? project.ball;
-  const displayPlayers = project.teams.flatMap(t => t.squad).map(player => playbackFrame?.playerPositions[player.id] ? { ...player, ...playbackFrame.playerPositions[player.id] } : player).sort((a, b) => a.zIndex - b.zIndex);
+  const displayPlayers = project.teams.flatMap(t => t.squad).map(player => {
+    const playbackPosition = playbackFrame?.playerPositions[player.id];
+    const displayed = playbackPosition ? { ...player, ...playbackPosition } : player;
+    if (!boardDragPreview?.ids.includes(player.id)) return displayed;
+    return {
+      ...displayed,
+      x: clamp01(displayed.x + boardDragPreview.dx),
+      y: clamp01(displayed.y + boardDragPreview.dy),
+    };
+  }).sort((a, b) => a.zIndex - b.zIndex);
+  const displayedPlayerPositions = new Map(displayPlayers.map(player => [player.id, { x: player.x, y: player.y }] as const));
+  const displayDrawings = (playbackFrame?.drawings ?? project.drawings)
+    .map(drawing => boardDragPreview?.ids.includes(drawing.id)
+      ? previewTranslatedDrawing(drawing, boardDragPreview.dx, boardDragPreview.dy)
+      : drawing)
+    .map(drawing => {
+      if (drawing.type !== 'polygon-zone' || !drawing.followPlayers || !drawing.linkedPlayerIds?.length) return drawing;
+      const points = drawing.linkedPlayerIds.flatMap(playerId => {
+        const position = displayedPlayerPositions.get(playerId);
+        return position ? [position.x, position.y] : [];
+      });
+      return points.length >= 6 ? { ...drawing, points } : drawing;
+    });
+  const sortedDrawings = displayDrawings.slice().sort((a, b) => a.zIndex - b.zIndex);
   const draftDrawing = draft && canDraw ? buildDrawing(tool, draft.start, draft.current, toolStyle, draft.id) : null;
 
   useEffect(() => {
     setDraft(null);
     setSelectionBox(null);
-    setAreaResize(null);
+    setBoardDragPreview(null);
+    boardDragRef.current = null;
     if (pointerFrameRef.current !== null) cancelAnimationFrame(pointerFrameRef.current);
     pointerFrameRef.current = null;
     pendingPointerRef.current = null;
@@ -1100,72 +1080,68 @@ export function PitchCanvas({ stageRef }: { stageRef: RefObject<Konva.Stage | nu
     if (canDraw) setDraft({ id: crypto.randomUUID(), start: [rel.x, rel.y], current: [rel.x, rel.y] });
     else setSelectionBox({ start: [rel.x, rel.y], current: [rel.x, rel.y] });
   };
-  const beginAreaResize = (drawing: Drawing, handle: AreaResizeHandle, event: Konva.KonvaEventObject<MouseEvent | TouchEvent>) => {
-    event.cancelBubble = true;
-    checkpointHistory();
-    setAreaResize({ drawing: { ...drawing, points: [...drawing.points] }, handle, bounds: areaResizeBounds(drawing, mapper) });
+  const beginBoardItemAt = (stage: Konva.Stage, native: MouseEvent | TouchEvent) => {
+    if (canDraw || playing) return false;
+    const rel = pointerRel(stage);
+    const pointer = mapper.toAbs(rel.x, rel.y);
+    const player = displayPlayers
+      .filter(candidate => candidate.starter && !candidate.hidden)
+      .map(candidate => {
+        const center = mapper.toAbs(candidate.x, candidate.y);
+        const radius = baseMarkerRadius * clampRange(candidate.size ?? 1, 0.65, 1.65) + 5;
+        return { player: candidate, distance: Math.hypot(pointer[0] - center[0], pointer[1] - center[1]), radius };
+      })
+      .filter(candidate => candidate.distance <= candidate.radius)
+      .sort((a, b) => a.distance - b.distance || b.player.zIndex - a.player.zIndex)[0]?.player;
+    const area = player ? undefined : sortedDrawings
+      .slice()
+      .reverse()
+      .find(drawing => pointHitsArea(drawing, rel, mapper));
+    const item = player ?? area;
+    if (!item) return false;
+
+    const modifier = 'ctrlKey' in native && (native.ctrlKey || native.metaKey);
+    if (modifier) {
+      toggleSelection(item.id);
+      setSelectionBox(null);
+      return true;
+    }
+
+    const state = useTacticsStore.getState();
+    const ids = state.selectedIds.includes(item.id) ? state.selectedIds : [item.id];
+    if (!state.selectedIds.includes(item.id)) select(item.id);
     setSelectionBox(null);
+    if (item.locked) return true;
+
+    boardDragRef.current = { ids, start: rel, moved: false };
+    setBoardDragPreview({ ids, dx: 0, dy: 0 });
+    stage.container().style.cursor = 'grab';
+    return true;
   };
-  const resizeAreaAt = (stage: Konva.Stage) => {
-    if (!areaResize) return;
-    const pointer = stage.getPointerPosition();
-    if (!pointer) return;
-    const rel = mapper.toRel(pointer.x / scale, pointer.y / scale);
-    const minWidth = Math.max(0.025, 34 / mapper.pitch.width);
-    const minHeight = Math.max(0.025, 34 / mapper.pitch.height);
-    const { drawing, handle, bounds } = areaResize;
-
-    if (drawing.type === 'circle-zone') {
-      const centerX = (bounds.x1 + bounds.x2) / 2;
-      const centerY = (bounds.y1 + bounds.y2) / 2;
-      const dx = (rel.x - centerX) * mapper.pitch.width;
-      const dy = (rel.y - centerY) * mapper.pitch.height;
-      const radiusPixels = Math.max(22, Math.hypot(dx, dy));
-      const maxRadiusPixels = Math.max(22, Math.min(
-        centerX * mapper.pitch.width,
-        (1 - centerX) * mapper.pitch.width,
-        centerY * mapper.pitch.height,
-        (1 - centerY) * mapper.pitch.height,
-      ));
-      const radius = Math.min(radiusPixels, maxRadiusPixels);
-      const radiusX = radius / mapper.pitch.width;
-      updateDrawing(drawing.id, { points: [centerX - radiusX, centerY, centerX + radiusX, centerY] });
-      return;
-    }
-
-    let x1 = bounds.x1;
-    let y1 = bounds.y1;
-    let x2 = bounds.x2;
-    let y2 = bounds.y2;
-    if (handle.includes('w')) x1 = Math.min(rel.x, x2 - minWidth);
-    if (handle.includes('e')) x2 = Math.max(rel.x, x1 + minWidth);
-    if (handle.includes('n')) y1 = Math.min(rel.y, y2 - minHeight);
-    if (handle.includes('s')) y2 = Math.max(rel.y, y1 + minHeight);
-    x1 = clampRange(x1, 0, 1 - minWidth);
-    y1 = clampRange(y1, 0, 1 - minHeight);
-    x2 = clampRange(x2, x1 + minWidth, 1);
-    y2 = clampRange(y2, y1 + minHeight, 1);
-
-    if (drawing.type === 'zone') {
-      updateDrawing(drawing.id, { points: [x1, y1, x2 - x1, y2 - y1] });
-      return;
-    }
-
-    const originalWidth = Math.max(0.0001, bounds.x2 - bounds.x1);
-    const originalHeight = Math.max(0.0001, bounds.y2 - bounds.y1);
-    const points = drawing.points.flatMap((point, index, all) => {
-      if (index % 2 === 1) return [];
-      const nextX = x1 + ((point - bounds.x1) / originalWidth) * (x2 - x1);
-      const nextY = y1 + ((all[index + 1] - bounds.y1) / originalHeight) * (y2 - y1);
-      return [clamp01(nextX), clamp01(nextY)];
-    });
-    updateDrawing(drawing.id, { points, followPlayers: false });
+  const moveBoardItemAt = (stage: Konva.Stage) => {
+    const session = boardDragRef.current;
+    if (!session) return false;
+    const rel = pointerRel(stage);
+    const dx = rel.x - session.start.x;
+    const dy = rel.y - session.start.y;
+    if (Math.hypot(dx, dy) > 0.002) session.moved = true;
+    setBoardDragPreview({ ids: session.ids, dx, dy });
+    stage.container().style.cursor = session.moved ? 'grabbing' : 'grab';
+    return true;
+  };
+  const finishBoardItemAt = (stage: Konva.Stage) => {
+    const session = boardDragRef.current;
+    if (!session) return false;
+    const rel = pointerRel(stage);
+    const dx = rel.x - session.start.x;
+    const dy = rel.y - session.start.y;
+    if (session.moved && (dx || dy)) moveSelectedItems(session.ids, dx, dy);
+    boardDragRef.current = null;
+    setBoardDragPreview(null);
+    stage.container().style.cursor = 'default';
+    return true;
   };
   const moveAt = (stage: Konva.Stage) => {
-    if (areaResize) {
-      resizeAreaAt(stage);
-      return;
-    }
     const rel = pointerRel(stage);
     pendingPointerRef.current = rel;
     if (pointerFrameRef.current !== null) return;
@@ -1178,12 +1154,6 @@ export function PitchCanvas({ stageRef }: { stageRef: RefObject<Konva.Stage | nu
     });
   };
   const finishAt = (stage: Konva.Stage) => {
-    if (areaResize) {
-      resizeAreaAt(stage);
-      setAreaResize(null);
-      stage.container().style.cursor = 'default';
-      return;
-    }
     const rel = pointerRel(stage);
     if (draft && canDraw) {
       const end = [rel.x, rel.y];
@@ -1258,34 +1228,35 @@ export function PitchCanvas({ stageRef }: { stageRef: RefObject<Konva.Stage | nu
     }
   };
 
-  return <div ref={containerRef} onDragOver={e => e.preventDefault()} onDrop={dropPlayer} className={`relative h-full w-full overflow-auto bg-[size:70px_70px,70px_70px,auto,auto] ${dark ? 'bg-[linear-gradient(90deg,rgba(96,165,250,.07)_1px,transparent_1px),linear-gradient(0deg,rgba(96,165,250,.07)_1px,transparent_1px),radial-gradient(circle_at_18%_12%,rgba(37,99,235,.26),transparent_32%),linear-gradient(135deg,#020617,#0f172a_48%,#111827)]' : 'bg-[linear-gradient(90deg,rgba(37,99,235,.035)_1px,transparent_1px),linear-gradient(0deg,rgba(37,99,235,.035)_1px,transparent_1px),radial-gradient(circle_at_18%_12%,#dbeafe,transparent_32%),linear-gradient(135deg,#f6f9ff,#eef7ff_48%,#fbfbf4)]'}`}>
-    <div className="pointer-events-none absolute inset-x-0 top-0 z-[15] flex items-start justify-between gap-3 px-3 py-3 sm:px-4">
-      <div className={`${dark ? 'text-slate-100' : 'text-[#0b172a]'}`}>
-        <h1 className={`bg-gradient-to-r bg-clip-text text-lg font-black leading-none text-transparent sm:text-2xl ${dark ? 'from-white via-[#93c5fd] to-[#5eead4]' : 'from-[#07111f] via-[#2563eb] to-[#0f766e]'}`} style={{ fontFamily: '"Segoe UI Variable Display", "Aptos Display", Inter, system-ui, sans-serif' }}>ZaidTacticsBoard</h1>
+  return <div className={`flex h-full w-full flex-col overflow-hidden bg-[size:70px_70px,70px_70px,auto,auto] ${dark ? 'bg-[linear-gradient(90deg,rgba(96,165,250,.07)_1px,transparent_1px),linear-gradient(0deg,rgba(96,165,250,.07)_1px,transparent_1px),radial-gradient(circle_at_18%_12%,rgba(37,99,235,.26),transparent_32%),linear-gradient(135deg,#020617,#0f172a_48%,#111827)]' : 'bg-[linear-gradient(90deg,rgba(37,99,235,.035)_1px,transparent_1px),linear-gradient(0deg,rgba(37,99,235,.035)_1px,transparent_1px),radial-gradient(circle_at_18%_12%,#dbeafe,transparent_32%),linear-gradient(135deg,#f6f9ff,#eef7ff_48%,#fbfbf4)]'}`}>
+    <header className={`relative z-20 flex h-14 shrink-0 items-center justify-between gap-3 border-b px-3 backdrop-blur-xl sm:px-4 ${dark ? 'border-slate-800/80 bg-slate-950/60' : 'border-white/70 bg-white/60'}`}>
+      <div className="flex min-w-0 items-center gap-2.5">
+        <span className="h-2 w-2 shrink-0 rounded-full bg-[#2563eb] shadow-[0_0_16px_rgba(37,99,235,.85)]" />
+        <div className="min-w-0">
+          <h1 className={`truncate bg-gradient-to-r bg-clip-text text-lg font-black leading-none text-transparent sm:text-xl ${dark ? 'from-white via-[#93c5fd] to-[#5eead4]' : 'from-[#07111f] via-[#2563eb] to-[#0f766e]'}`} style={{ fontFamily: '"Segoe UI Variable Display", "Aptos Display", Inter, system-ui, sans-serif' }}>ZaidTacticsBoard</h1>
+          <p className={`mt-0.5 hidden text-[8px] font-black uppercase tracking-[0.24em] sm:block ${dark ? 'text-slate-400' : 'text-slate-500'}`}>Tactical studio</p>
+        </div>
       </div>
-      <div className="pointer-events-auto flex shrink-0 items-center gap-1.5">
-        <button type="button" onClick={() => void shareBoard()} className={`flex h-9 items-center gap-1.5 rounded-lg border px-2 text-xs font-black shadow-[0_10px_26px_rgba(37,99,235,.12)] backdrop-blur ${dark ? 'border-slate-700 bg-slate-950/78 text-slate-100 hover:bg-slate-900' : 'border-[#d7e5f6] bg-white/82 text-[#0b172a] hover:border-[#2563eb]'}`}>
+      <div className="flex shrink-0 items-center gap-1.5">
+        <button type="button" aria-label="Share tactics board" onClick={() => void shareBoard()} className={`flex h-9 items-center gap-1.5 rounded-lg border px-2.5 text-xs font-black transition ${dark ? 'border-slate-700 bg-slate-950/70 text-slate-100 hover:border-slate-500 hover:bg-slate-900' : 'border-[#d7e5f6] bg-white/80 text-[#0b172a] hover:border-[#2563eb] hover:bg-white'}`}>
           <Share2 size={14} />
           <span className="hidden sm:inline">{shareDone ? 'Copied' : 'Share'}</span>
         </button>
-        <a href="mailto:info@zaidtacticsboard.com" className={`flex h-9 items-center gap-1.5 rounded-lg border px-2 text-xs font-black shadow-[0_10px_26px_rgba(37,99,235,.12)] backdrop-blur ${dark ? 'border-slate-700 bg-slate-950/78 text-slate-100 hover:bg-slate-900' : 'border-[#d7e5f6] bg-white/82 text-[#0b172a] hover:border-[#2563eb]'}`}>
+        <a aria-label="Contact ZaidTacticsBoard" href="mailto:info@zaidtacticsboard.com" className={`flex h-9 items-center gap-1.5 rounded-lg border px-2.5 text-xs font-black transition ${dark ? 'border-slate-700 bg-slate-950/70 text-slate-100 hover:border-slate-500 hover:bg-slate-900' : 'border-[#d7e5f6] bg-white/80 text-[#0b172a] hover:border-[#2563eb] hover:bg-white'}`}>
           <Mail size={14} />
           <span className="hidden md:inline">Contact</span>
         </a>
       </div>
-    </div>
-    {squadBarsOpen && <div className="pointer-events-none sticky top-0 z-40 h-0 min-w-full opacity-100">
-      <div className="flex min-h-80 justify-between gap-3 p-3" style={{ height: 'min(690px, calc(100vh - 17rem))' }}>
-        <div className="pointer-events-auto h-full">{project.teams[0] && <TeamBenchBar team={project.teams[0]} side="left" dropActive={false} />}</div>
-        <div className="pointer-events-auto h-full">{project.teams[1] && <TeamBenchBar team={project.teams[1]} side="right" dropActive={false} />}</div>
-      </div>
-    </div>}
-    <div className="relative z-10 grid min-h-full min-w-full place-items-center p-4">
+    </header>
+    <div ref={containerRef} onDragOver={e => e.preventDefault()} onDrop={dropPlayer} className="relative min-h-0 flex-1 overflow-auto">
+      <div className="relative z-10 grid min-h-full min-w-full place-items-center p-3 sm:p-4">
         <Stage ref={stageRef} width={width * scale} height={height * scale} scale={{ x: scale, y: scale }}
           onMouseDown={(e) => {
             const stage = e.target.getStage();
             if (!stage) return;
-            if (e.target !== stage && Boolean(e.target.findAncestor('.area-controls', true))) return;
+            const native = e.evt as MouseEvent;
+            if (native.button !== 0) return;
+            if (beginBoardItemAt(stage, native)) return;
             const hitInteractiveItem = e.target !== stage && Boolean(e.target.findAncestor('.board-item', true));
             if (hitInteractiveItem) return;
             if (canDraw) select(undefined);
@@ -1294,19 +1265,33 @@ export function PitchCanvas({ stageRef }: { stageRef: RefObject<Konva.Stage | nu
           onMouseMove={(e) => {
             const stage = e.target.getStage();
             if (!stage) return;
+            if (moveBoardItemAt(stage)) return;
             if (e.target === stage && !canDraw) stage.container().style.cursor = 'default';
             moveAt(stage);
           }}
-          onMouseUp={(e) => { const stage = e.target.getStage(); if (stage) finishAt(stage); }}
+          onMouseUp={(e) => {
+            const stage = e.target.getStage();
+            if (!stage || finishBoardItemAt(stage)) return;
+            finishAt(stage);
+          }}
           onTouchStart={(e) => {
             const stage = e.target.getStage();
             if (!stage) return;
-            if (e.target !== stage && Boolean(e.target.findAncestor('.area-controls', true))) return;
+            if (beginBoardItemAt(stage, e.evt as TouchEvent)) return;
             const hitInteractiveItem = e.target !== stage && Boolean(e.target.findAncestor('.board-item', true));
-            if (!hitInteractiveItem) beginAt(stage);
+            if (hitInteractiveItem) return;
+            beginAt(stage);
           }}
-          onTouchMove={(e) => { const stage = e.target.getStage(); if (stage) moveAt(stage); }}
-          onTouchEnd={(e) => { const stage = e.target.getStage(); if (stage) finishAt(stage); }}>
+          onTouchMove={(e) => {
+            const stage = e.target.getStage();
+            if (!stage || moveBoardItemAt(stage)) return;
+            moveAt(stage);
+          }}
+          onTouchEnd={(e) => {
+            const stage = e.target.getStage();
+            if (!stage || finishBoardItemAt(stage)) return;
+            finishAt(stage);
+          }}>
           <Layer listening={false}><Pitch width={width} height={height} mapper={mapper} /></Layer>
           <Layer listening={boardInteractive}>{sortedDrawings.map(d => <DrawingShape key={d.id} drawing={d} mapper={mapper} interactive={boardInteractive} />)}</Layer>
           <Layer listening={boardInteractive}>
@@ -1314,7 +1299,7 @@ export function PitchCanvas({ stageRef }: { stageRef: RefObject<Konva.Stage | nu
             <BallMarker ball={displayBall} mapper={mapper} />
           </Layer>
           <Layer listening={boardInteractive}>
-            {selectedAreas.map(drawing => <AreaResizeControls key={drawing.id} drawing={drawing} mapper={mapper} onResizeStart={beginAreaResize} />)}
+            <ManagedBoardHitTargets players={displayPlayers} drawings={sortedDrawings} mapper={mapper} />
           </Layer>
           <Layer listening={false}>
             {draftDrawing && <DrawingShape drawing={draftDrawing} mapper={mapper} interactive={false} />}
@@ -1332,6 +1317,7 @@ export function PitchCanvas({ stageRef }: { stageRef: RefObject<Konva.Stage | nu
             />}
           </Layer>
         </Stage>
+      </div>
     </div>
   </div>;
 }

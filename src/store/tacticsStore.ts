@@ -328,7 +328,6 @@ interface Store {
   tool: Tool;
   toolStyle: ToolStyle;
   viewZoom: number;
-  squadBarsOpen: boolean;
   dockPosition: DockPosition;
   dockTab: DockTab;
   playing: boolean;
@@ -339,7 +338,6 @@ interface Store {
   setToolStyle: (patch: Partial<ToolStyle>) => void;
   setViewZoom: (zoom: number) => void;
   setBoardFormat: (format: BoardFormat) => void;
-  setSquadBarsOpen: (open: boolean) => void;
   setDockPosition: (position: DockPosition) => void;
   setDockTab: (tab: DockTab) => void;
   setPlaying: (playing: boolean) => void;
@@ -384,13 +382,12 @@ interface Store {
 }
 
 export const useTacticsStore = create<Store>()(persist((set, get) => ({
-  project: createInitialProject(), selectedIds: [], tool: 'select', toolStyle: defaultToolStyle, viewZoom: 1.08, squadBarsOpen: false, dockPosition: 'bottom', dockTab: 'page', playing: false, historyPast: [], historyFuture: [],
+  project: createInitialProject(), selectedIds: [], tool: 'select', toolStyle: defaultToolStyle, viewZoom: 1.08, dockPosition: 'bottom', dockTab: 'page', playing: false, historyPast: [], historyFuture: [],
   setTool: (tool) => set({ tool }),
   setToolStyle: (patch) => set(s => ({ toolStyle: { ...s.toolStyle, ...patch } })),
   setViewZoom: (viewZoom) => set({ viewZoom }),
-  setSquadBarsOpen: (squadBarsOpen) => set({ squadBarsOpen }),
-  setDockPosition: (dockPosition) => set(state => ({ dockPosition, squadBarsOpen: dockPosition === 'hidden' ? false : state.dockTab === 'squad' })),
-  setDockTab: (dockTab) => set({ dockTab, squadBarsOpen: dockTab === 'squad' }),
+  setDockPosition: (dockPosition) => set({ dockPosition }),
+  setDockTab: (dockTab) => set({ dockTab }),
   setBoardFormat: (format) => set(({ project }) => {
     const from = project.settings.format;
     const view = boardViews[format];
