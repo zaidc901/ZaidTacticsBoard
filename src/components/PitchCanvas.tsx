@@ -937,9 +937,34 @@ function pointHitsArea(drawing: Drawing, rel: { x: number; y: number }, mapper: 
 type BoardDragSession = {
   ids: string[];
   start: { x: number; y: number };
-  nodes: { node: Konva.Node; x: number; y: number }[];
   moved: boolean;
 };
+
+type BoardDragPreview = {
+  ids: string[];
+  dx: number;
+  dy: number;
+};
+
+function previewTranslatedDrawing(drawing: Drawing, dx: number, dy: number) {
+  const points = drawing.points.slice();
+  if (drawing.type === 'zone') {
+    const width = points[2] ?? 0;
+    const height = points[3] ?? 0;
+    points[0] = clampRange(points[0] + dx, 0, Math.max(0, 1 - width));
+    points[1] = clampRange(points[1] + dy, 0, Math.max(0, 1 - height));
+    return { ...drawing, points };
+  }
+  const xs = points.filter((_, index) => index % 2 === 0);
+  const ys = points.filter((_, index) => index % 2 === 1);
+  const safeDx = clampRange(dx, -Math.min(...xs), 1 - Math.max(...xs));
+  const safeDy = clampRange(dy, -Math.min(...ys), 1 - Math.max(...ys));
+  for (let index = 0; index < points.length; index += 2) {
+    points[index] += safeDx;
+    points[index + 1] += safeDy;
+  }
+  return { ...drawing, points, followPlayers: drawing.type === 'polygon-zone' ? false : drawing.followPlayers };
+}
 
 function ManagedBoardHitTargets({ players, drawings, mapper }: { players: Player[]; drawings: Drawing[]; mapper: Mapper }) {
   return <>
@@ -973,6 +998,7 @@ export function PitchCanvas({ stageRef }: { stageRef: RefObject<Konva.Stage | nu
   const { project, tool, toolStyle, viewZoom, dockPosition, playbackFrame, playing, addDrawing, placePlayer, select, toggleSelection, setSelection, checkpointHistory, moveSelectedItems, setTool, setDockTab, setDockPosition } = useTacticsStore();
   const [draft, setDraft] = useState<{ id: string; start: number[]; current: number[] } | null>(null);
   const [selection, setSelectionBox] = useState<{ start: number[]; current: number[] } | null>(null);
+  const [boardDragPreview, setBoardDragPreview] = useState<BoardDragPreview | null>(null);
   const [shareDone, setShareDone] = useState(false);
   const pointerFrameRef = useRef<number | null>(null);
   const pendingPointerRef = useRef<{ x: number; y: number } | null>(null);
@@ -998,15 +1024,38 @@ export function PitchCanvas({ stageRef }: { stageRef: RefObject<Konva.Stage | nu
   };
   const canDraw = tool !== 'select';
   const boardInteractive = !canDraw && !playing;
-  const displayDrawings = playbackFrame?.drawings ?? project.drawings;
-  const sortedDrawings = displayDrawings.slice().sort((a, b) => a.zIndex - b.zIndex);
   const displayBall = playbackFrame?.ball ?? project.ball;
-  const displayPlayers = project.teams.flatMap(t => t.squad).map(player => playbackFrame?.playerPositions[player.id] ? { ...player, ...playbackFrame.playerPositions[player.id] } : player).sort((a, b) => a.zIndex - b.zIndex);
+  const displayPlayers = project.teams.flatMap(t => t.squad).map(player => {
+    const playbackPosition = playbackFrame?.playerPositions[player.id];
+    const displayed = playbackPosition ? { ...player, ...playbackPosition } : player;
+    if (!boardDragPreview?.ids.includes(player.id)) return displayed;
+    return {
+      ...displayed,
+      x: clamp01(displayed.x + boardDragPreview.dx),
+      y: clamp01(displayed.y + boardDragPreview.dy),
+    };
+  }).sort((a, b) => a.zIndex - b.zIndex);
+  const displayedPlayerPositions = new Map(displayPlayers.map(player => [player.id, { x: player.x, y: player.y }] as const));
+  const displayDrawings = (playbackFrame?.drawings ?? project.drawings)
+    .map(drawing => boardDragPreview?.ids.includes(drawing.id)
+      ? previewTranslatedDrawing(drawing, boardDragPreview.dx, boardDragPreview.dy)
+      : drawing)
+    .map(drawing => {
+      if (drawing.type !== 'polygon-zone' || !drawing.followPlayers || !drawing.linkedPlayerIds?.length) return drawing;
+      const points = drawing.linkedPlayerIds.flatMap(playerId => {
+        const position = displayedPlayerPositions.get(playerId);
+        return position ? [position.x, position.y] : [];
+      });
+      return points.length >= 6 ? { ...drawing, points } : drawing;
+    });
+  const sortedDrawings = displayDrawings.slice().sort((a, b) => a.zIndex - b.zIndex);
   const draftDrawing = draft && canDraw ? buildDrawing(tool, draft.start, draft.current, toolStyle, draft.id) : null;
 
   useEffect(() => {
     setDraft(null);
     setSelectionBox(null);
+    setBoardDragPreview(null);
+    boardDragRef.current = null;
     if (pointerFrameRef.current !== null) cancelAnimationFrame(pointerFrameRef.current);
     pointerFrameRef.current = null;
     pendingPointerRef.current = null;
@@ -1064,11 +1113,8 @@ export function PitchCanvas({ stageRef }: { stageRef: RefObject<Konva.Stage | nu
     setSelectionBox(null);
     if (item.locked) return true;
 
-    const nodes = ids.flatMap(id => {
-      const node = stage.findOne<Konva.Node>((nodeCandidate: Konva.Node) => nodeCandidate.id() === `player-node-${id}` || nodeCandidate.id() === `area-node-${id}`);
-      return node ? [{ node, x: node.x(), y: node.y() }] : [];
-    });
-    boardDragRef.current = { ids, start: rel, nodes, moved: false };
+    boardDragRef.current = { ids, start: rel, moved: false };
+    setBoardDragPreview({ ids, dx: 0, dy: 0 });
     stage.container().style.cursor = 'grab';
     return true;
   };
@@ -1079,10 +1125,7 @@ export function PitchCanvas({ stageRef }: { stageRef: RefObject<Konva.Stage | nu
     const dx = rel.x - session.start.x;
     const dy = rel.y - session.start.y;
     if (Math.hypot(dx, dy) > 0.002) session.moved = true;
-    session.nodes.forEach(({ node, x, y }) => node.position({
-      x: x + dx * mapper.pitch.width,
-      y: y + dy * mapper.pitch.height,
-    }));
+    setBoardDragPreview({ ids: session.ids, dx, dy });
     stage.container().style.cursor = session.moved ? 'grabbing' : 'grab';
     return true;
   };
@@ -1092,9 +1135,9 @@ export function PitchCanvas({ stageRef }: { stageRef: RefObject<Konva.Stage | nu
     const rel = pointerRel(stage);
     const dx = rel.x - session.start.x;
     const dy = rel.y - session.start.y;
-    session.nodes.forEach(({ node, x, y }) => node.position({ x, y }));
     if (session.moved && (dx || dy)) moveSelectedItems(session.ids, dx, dy);
     boardDragRef.current = null;
+    setBoardDragPreview(null);
     stage.container().style.cursor = 'default';
     return true;
   };
