@@ -166,8 +166,11 @@ export default function App() {
   return <div className={`tactics-shell flex h-screen h-[100dvh] overflow-hidden ${dockPosition === 'right' ? 'flex-row' : 'flex-col'} ${dark ? 'tactics-dark bg-slate-950 text-slate-100' : 'bg-[#f6f9ff] text-[#0b172a]'}`}>
     <main className="relative min-h-0 min-w-0 flex-1 overflow-hidden">
       <PitchCanvas stageRef={stageRef} />
-      <div className="pointer-events-none absolute bottom-3 left-3 z-40 flex items-center gap-2"><DockModeSwitcher /><PitchScaleControl /></div>
-      <div className="pointer-events-none absolute bottom-3 right-3 z-40"><QuickActions /></div>
+      {dockPosition === 'hidden' && <div className="pointer-events-none absolute bottom-3 left-1/2 z-40 flex max-w-[calc(100%-1.5rem)] -translate-x-1/2 flex-wrap items-center justify-center gap-2">
+        <DockModeSwitcher />
+        <PitchScaleControl />
+        <QuickActions />
+      </div>}
     </main>
     {dockPosition !== 'hidden' && <ControlDock onExportImage={exportImage} onPreviewAnimation={() => { void playScenes(); }} onExportVideo={exportVideo} />}
   </div>;

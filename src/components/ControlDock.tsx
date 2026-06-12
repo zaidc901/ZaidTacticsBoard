@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { AlertTriangle, BadgeHelp, Circle as CircleIcon, CircleDot, Copy, Download, EyeOff, Film, Frown, ImageDown, ImagePlus, Link2, Minus, Moon, MousePointer2, MoveHorizontal, MoveRight, MoveVertical, Palette, PanelBottom, PanelRight, Pencil, Play, Plus, Redo2, RotateCcw, Route, Settings2, Shield, SlidersHorizontal, Square, Trash2, Type, Undo2, Unlink2, UserMinus, UsersRound } from 'lucide-react';
+import { AlertTriangle, BadgeHelp, Circle as CircleIcon, CircleDot, Copy, Download, Eraser, EyeOff, Film, Frown, ImageDown, ImagePlus, Link2, Minus, Moon, MousePointer2, MoveHorizontal, MoveRight, MoveVertical, Palette, PanelBottom, PanelRight, Pencil, Play, Plus, Redo2, RotateCcw, Route, Settings2, Shield, SlidersHorizontal, Square, Trash2, Type, Undo2, Unlink2, UserMinus, UsersRound } from 'lucide-react';
 import { formations, FormationKey } from '../data/formations';
 import { flagImageUrlByPresetId, presetCollections, PresetCollectionId, teamPresetById, teamPresets, TeamPreset } from '../data/teamPresets';
 import { useTacticsStore } from '../store/tacticsStore';
@@ -73,11 +73,11 @@ const toolSections: { id: string; label: string; tools: { id: Tool; label: strin
 ];
 
 const tabs: { id: DockTab; label: string; icon: any }[] = [
-  { id: 'page', label: 'Page', icon: SlidersHorizontal },
+  { id: 'page', label: 'Pitch', icon: SlidersHorizontal },
   { id: 'style', label: 'Style', icon: Settings2 },
   { id: 'squad', label: 'Squad', icon: UsersRound },
   { id: 'presets', label: 'Preset teams', icon: Shield },
-  { id: 'edit', label: 'Edit', icon: Pencil },
+  { id: 'edit', label: 'Player', icon: Pencil },
   { id: 'scenes', label: 'Scenes', icon: Film },
   { id: 'export', label: 'Export', icon: Download },
 ];
@@ -217,7 +217,10 @@ function Field({ label, value, onChange, type = 'text', min, max, step }: { labe
 function ColorField({ label, value, onChange }: { label: string; value: string; onChange: (value: string) => void }) {
   return <label className="dock-field space-y-1 text-[10px] font-black uppercase tracking-[0.14em] text-slate-500">
     <span>{label}</span>
-    <input className="h-9 w-full rounded-lg border border-[#d7e5f6] bg-white/80 p-1 outline-none focus:border-[#2563eb]" type="color" value={value} onChange={e => onChange(e.target.value)} />
+    <span className="flex h-9 items-center gap-2 rounded-lg border border-[#d7e5f6] bg-white/80 p-1 pr-2 normal-case tracking-normal text-[#0b172a]">
+      <input aria-label={label} className="dock-color-input h-7 w-10 shrink-0 cursor-pointer outline-none" type="color" value={value} onChange={e => onChange(e.target.value)} />
+      <span className="min-w-0 truncate font-mono text-[10px] font-bold uppercase">{value}</span>
+    </span>
   </label>;
 }
 
@@ -272,38 +275,42 @@ function ToolRail({ vertical = false, compact = false }: { vertical?: boolean; c
   </div>;
 }
 
-export function QuickActions() {
+export function QuickActions({ embedded = false }: { embedded?: boolean } = {}) {
   const { project, selectedIds, historyPast, historyFuture, undoLastDrawing, redoLastDrawing, duplicateSelectedDrawings, removeSelectedDrawings, clearDrawings } = useTacticsStore();
   const dark = project.settings.theme === 'dark';
   const selectedCount = project.drawings.filter(drawing => selectedIds.includes(drawing.id)).length;
   const buttonClass = dark ? 'border-slate-700 bg-slate-950/90 text-slate-100 hover:bg-slate-900' : 'border-[#d7e5f6] bg-white/92 text-[#0b172a] hover:border-[#2563eb]';
-  return <div className={`pointer-events-auto flex items-center gap-1 rounded-xl border p-1.5 shadow-[0_16px_38px_rgba(11,23,42,.16)] backdrop-blur ${dark ? 'border-slate-700 bg-slate-950/90' : 'border-[#d7e5f6] bg-white/90'}`}>
-    <button aria-label="Undo last change" title="Undo last change" onClick={undoLastDrawing} disabled={!historyPast.length} className={`grid h-9 w-9 place-items-center rounded-lg border disabled:opacity-35 ${buttonClass}`}><Undo2 size={16} /></button>
-    <button aria-label="Redo last change" title="Redo last change" onClick={redoLastDrawing} disabled={!historyFuture.length} className={`grid h-9 w-9 place-items-center rounded-lg border disabled:opacity-35 ${buttonClass}`}><Redo2 size={16} /></button>
-    <button aria-label="Duplicate selected drawings" title="Duplicate selected" onClick={duplicateSelectedDrawings} disabled={!selectedCount} className={`relative grid h-9 w-9 place-items-center rounded-lg border disabled:opacity-35 ${buttonClass}`}><Copy size={16} />{selectedCount > 1 && <span className="absolute -right-1 -top-1 grid h-4 min-w-4 place-items-center rounded-full bg-[#2563eb] px-1 text-[9px] font-black text-white">{selectedCount}</span>}</button>
-    <button aria-label="Trash selected drawings" title="Trash selected" onClick={removeSelectedDrawings} disabled={!selectedCount} className="grid h-9 w-9 place-items-center rounded-lg border border-red-100 bg-red-50 text-red-600 disabled:opacity-35"><Trash2 size={16} /></button>
-    <button aria-label="Trash all drawings" title="Trash all drawings" onClick={clearDrawings} disabled={!project.drawings.length} className="grid h-9 w-9 place-items-center rounded-lg bg-red-600 text-white disabled:opacity-35"><Trash2 size={16} /></button>
+  const shellClass = embedded
+    ? 'border-transparent bg-transparent p-0 shadow-none'
+    : dark ? 'border-slate-700 bg-slate-950/90 p-1.5 shadow-[0_16px_38px_rgba(11,23,42,.16)]' : 'border-[#d7e5f6] bg-white/90 p-1.5 shadow-[0_16px_38px_rgba(11,23,42,.16)]';
+  const sizeClass = embedded ? 'h-8 w-8' : 'h-9 w-9';
+  return <div className={`pointer-events-auto flex items-center gap-1 rounded-xl border backdrop-blur ${shellClass}`}>
+    <button aria-label="Undo last change" title="Undo last change" onClick={undoLastDrawing} disabled={!historyPast.length} className={`grid ${sizeClass} place-items-center rounded-lg border disabled:opacity-35 ${buttonClass}`}><Undo2 size={16} /></button>
+    <button aria-label="Redo last change" title="Redo last change" onClick={redoLastDrawing} disabled={!historyFuture.length} className={`grid ${sizeClass} place-items-center rounded-lg border disabled:opacity-35 ${buttonClass}`}><Redo2 size={16} /></button>
+    <button aria-label="Duplicate selected drawings" title="Duplicate selected" onClick={duplicateSelectedDrawings} disabled={!selectedCount} className={`relative grid ${sizeClass} place-items-center rounded-lg border disabled:opacity-35 ${buttonClass}`}><Copy size={16} />{selectedCount > 1 && <span className="absolute -right-1 -top-1 grid h-4 min-w-4 place-items-center rounded-full bg-[#2563eb] px-1 text-[9px] font-black text-white">{selectedCount}</span>}</button>
+    <button aria-label="Trash selected drawings" title="Trash selected" onClick={removeSelectedDrawings} disabled={!selectedCount} className={`grid ${sizeClass} place-items-center rounded-lg border border-red-100 bg-red-50 text-red-600 disabled:opacity-35`}><Trash2 size={16} /></button>
+    <button aria-label="Clear all drawings" title="Clear all drawings" onClick={clearDrawings} disabled={!project.drawings.length} className={`grid ${sizeClass} place-items-center rounded-lg bg-red-600 text-white disabled:opacity-35`}><Eraser size={16} /></button>
   </div>;
 }
 
-export function PitchScaleControl() {
+export function PitchScaleControl({ embedded = false }: { embedded?: boolean } = {}) {
   const { project, viewZoom, setViewZoom } = useTacticsStore();
   const dark = project.settings.theme === 'dark';
   const setZoom = (zoom: number) => setViewZoom(Math.max(0.35, Math.min(1.35, zoom)));
   const shellClass = dark ? 'border-slate-700 bg-slate-950/90 text-slate-100' : 'border-[#d7e5f6] bg-white/90 text-[#0b172a]';
   const buttonClass = dark ? 'hover:bg-slate-800' : 'hover:bg-[#eff6ff]';
-  return <div className={`pointer-events-auto flex h-10 items-center gap-1 rounded-xl border px-1.5 shadow-[0_12px_30px_rgba(11,23,42,.12)] backdrop-blur ${shellClass}`}>
+  return <div className={`pointer-events-auto flex ${embedded ? 'h-8 border-transparent bg-transparent px-0 shadow-none' : 'h-10 px-1.5 shadow-[0_12px_30px_rgba(11,23,42,.12)]'} items-center gap-1 rounded-xl border backdrop-blur ${embedded ? '' : shellClass}`}>
     <button aria-label="Zoom pitch out" title="Zoom pitch out" onClick={() => setZoom(viewZoom - 0.05)} className={`grid h-7 w-7 place-items-center rounded-lg ${buttonClass}`}><Minus size={14} /></button>
     <label className="flex items-center gap-2" title="Pitch scale">
       <SlidersHorizontal size={14} className="text-[#2563eb]" />
-      <input aria-label="Pitch scale" type="range" min="0.35" max="1.35" step="0.01" value={viewZoom} onChange={event => setZoom(Number(event.target.value))} className="w-20 accent-[#2563eb] sm:w-28" />
+      <input aria-label="Pitch scale" type="range" min="0.35" max="1.35" step="0.01" value={viewZoom} onChange={event => setZoom(Number(event.target.value))} className={`${embedded ? 'w-16 xl:w-24' : 'w-20 sm:w-28'} accent-[#2563eb]`} />
       <span className="w-9 text-right text-[10px] font-black">{Math.round(viewZoom * 100)}%</span>
     </label>
     <button aria-label="Zoom pitch in" title="Zoom pitch in" onClick={() => setZoom(viewZoom + 0.05)} className={`grid h-7 w-7 place-items-center rounded-lg ${buttonClass}`}><Plus size={14} /></button>
   </div>;
 }
 
-export function DockModeSwitcher() {
+export function DockModeSwitcher({ embedded = false }: { embedded?: boolean } = {}) {
   const { project, dockPosition, setDockPosition } = useTacticsStore();
   const dark = project.settings.theme === 'dark';
   const modes = [
@@ -311,9 +318,20 @@ export function DockModeSwitcher() {
     { id: 'right' as const, label: 'Side menu', icon: PanelRight },
     { id: 'hidden' as const, label: 'Hide menu', icon: EyeOff },
   ];
-  return <div className={`pointer-events-auto flex items-center gap-1 rounded-xl border p-1 shadow-[0_12px_30px_rgba(11,23,42,.12)] backdrop-blur ${dark ? 'border-slate-700 bg-slate-950/90' : 'border-[#d7e5f6] bg-white/90'}`}>
-    {modes.map(({ id, label, icon: Icon }) => <button key={id} aria-label={label} title={label} onClick={() => setDockPosition(id)} className={`grid h-8 w-8 place-items-center rounded-lg transition ${dockPosition === id ? 'bg-[#2563eb] text-white' : dark ? 'text-slate-300 hover:bg-slate-800' : 'text-slate-600 hover:bg-[#eff6ff]'}`}><Icon size={15} /></button>)}
+  return <div className={`pointer-events-auto flex items-center gap-1 rounded-xl border ${embedded ? 'border-transparent bg-transparent p-0 shadow-none' : `p-1 shadow-[0_12px_30px_rgba(11,23,42,.12)] ${dark ? 'border-slate-700 bg-slate-950/90' : 'border-[#d7e5f6] bg-white/90'}`} backdrop-blur`}>
+    {modes.map(({ id, label, icon: Icon }) => <button key={id} aria-label={label} aria-pressed={dockPosition === id} title={label} onClick={() => setDockPosition(id)} className={`grid h-8 w-8 place-items-center rounded-lg transition ${dockPosition === id ? 'bg-[#2563eb] text-white' : dark ? 'text-slate-300 hover:bg-slate-800' : 'text-slate-600 hover:bg-[#eff6ff]'}`}><Icon size={15} /></button>)}
   </div>;
+}
+
+function WorkspaceTabs({ side = false }: { side?: boolean }) {
+  const { dockTab: tab, setDockTab: setTab, project } = useTacticsStore();
+  const dark = project.settings.theme === 'dark';
+  return <nav aria-label="Workspace" className={side ? 'grid w-full grid-cols-3 gap-1.5' : 'flex min-w-max items-center gap-1'}>
+    {tabs.map(({ id, label, icon: Icon }) => <button key={id} aria-pressed={tab === id} onClick={() => setTab(id)} className={`flex h-8 items-center justify-center gap-1.5 px-2.5 ${side ? '' : 'whitespace-nowrap'} ${tab === id ? 'bg-[#2563eb] text-white shadow-[0_8px_18px_rgba(37,99,235,.2)]' : dark ? 'border border-slate-700 bg-slate-900 text-slate-200 hover:border-slate-500' : 'border border-[#d7e5f6] bg-white/80 text-[#0b172a] hover:border-[#93c5fd] hover:bg-[#eff6ff]'}`}>
+      <Icon size={14} />
+      <span>{label}</span>
+    </button>)}
+  </nav>;
 }
 
 function PagePanel() {
@@ -506,7 +524,7 @@ function PlayerEditPanel() {
 }
 
 function StylePanel() {
-  const { project, selectedId, selectedIds, tool, toolStyle, setToolStyle, updateSettings, updateDrawing, addDrawing, dockPosition } = useTacticsStore();
+  const { project, selectedId, selectedIds, tool, toolStyle, setToolStyle, updateSettings, updatePlayer, updateDrawing, addDrawing, dockPosition } = useTacticsStore();
   const selectedDrawing = project.drawings.find(d => d.id === selectedId);
   const selectedDrawings = project.drawings.filter(drawing => selectedIds.includes(drawing.id));
   const selectedPlayers = project.teams.flatMap(team => team.squad).filter(player => player.starter && selectedIds.includes(player.id));
@@ -630,6 +648,22 @@ function StylePanel() {
       </div> : <div className="rounded-lg border border-dashed border-[#d7e5f6] px-3 py-5 text-center text-xs font-semibold text-slate-500">Select an area to choose its fill.</div>}
     </section>
     <section className={panelClass('grid gap-2', dark)}>
+      {selectedPlayers.length > 0 && <>
+        <Field
+          label={`Player size ${Math.round((selectedPlayers[0].size ?? 1) * 100)}%`}
+          type="range"
+          min="0.65"
+          max="1.65"
+          step="0.05"
+          value={selectedPlayers[0].size ?? 1}
+          onChange={value => selectedPlayers.forEach(player => updatePlayer(player.id, { size: Number(value) }))}
+        />
+        <ColorField
+          label={`Name background (${selectedPlayers.length})`}
+          value={selectedPlayers[0].nameBackground ?? '#ffffff'}
+          onChange={nameBackground => selectedPlayers.forEach(player => updatePlayer(player.id, { nameBackground }))}
+        />
+      </>}
       {!isGoal && <Field label="Thickness" type="range" min="1" max="18" value={selectedDrawing?.strokeWidth ?? toolStyle.strokeWidth} onChange={v => updateNumber('strokeWidth', Number(v))} />}
       {selectedDrawing?.type === 'text' && <Field label="Text" value={selectedDrawing.text ?? ''} onChange={v => updateDrawing(selectedDrawing.id, { text: v })} />}
       {selectedDrawing && isRotatableProp && <div className="grid grid-cols-4 gap-1">
@@ -709,32 +743,37 @@ function ExportPanel({ onExportImage, onExportVideo }: Pick<ControlDockProps, 'o
 }
 
 export function ControlDock({ onExportImage, onPreviewAnimation, onExportVideo }: ControlDockProps) {
-  const { dockTab: tab, setDockTab: setTab, dockPosition, setSquadBarsOpen } = useTacticsStore();
+  const { dockTab: tab, dockPosition } = useTacticsStore();
   const dark = useTacticsStore(s => s.project.settings.theme === 'dark');
   const side = dockPosition === 'right';
-  useEffect(() => {
-    setSquadBarsOpen(tab === 'squad');
-  }, [setSquadBarsOpen, tab]);
-  return <footer className={`dock-shell ${side ? 'dock-side h-full w-[min(420px,90vw)] shrink-0 border-l' : 'dock-bottom h-[clamp(180px,23dvh,210px)] shrink-0 border-t'} min-h-0 overflow-hidden shadow-[0_-18px_60px_rgba(11,23,42,.08)] backdrop-blur ${dark ? 'border-slate-700 bg-slate-950/95' : 'border-[#d7e5f6] bg-white/95'}`}>
+  return <footer className={`dock-shell ${side ? 'dock-side h-full w-[min(420px,90vw)] shrink-0 border-l' : 'dock-bottom h-[clamp(220px,27dvh,260px)] shrink-0 border-t'} min-h-0 overflow-hidden shadow-[0_-18px_60px_rgba(11,23,42,.08)] backdrop-blur ${dark ? 'border-slate-700 bg-slate-950/95' : 'border-[#d7e5f6] bg-white/95'}`}>
     <div className="mx-auto flex h-full max-w-[1680px] flex-col">
       {side ? <>
-        <div className="max-h-[38dvh] shrink-0 overflow-y-auto overscroll-contain p-1.5"><ToolRail vertical /></div>
+        <div className={`flex shrink-0 flex-col gap-1.5 border-b p-1.5 ${dark ? 'border-slate-700' : 'border-[#d7e5f6]'}`}>
+          <div className="flex items-center justify-between gap-2"><QuickActions embedded /><DockModeSwitcher embedded /></div>
+          <PitchScaleControl embedded />
+        </div>
+        <div className="max-h-[34dvh] shrink-0 overflow-y-auto overscroll-contain p-1.5"><ToolRail vertical /></div>
         <div className={`flex shrink-0 flex-col items-stretch gap-2 overflow-x-auto border-y px-2 py-1.5 ${dark ? 'border-slate-700' : 'border-[#d7e5f6]'}`}>
           <span className={`shrink-0 text-[9px] font-black uppercase tracking-[0.18em] ${dark ? 'text-slate-400' : 'text-slate-500'}`}>Workspace</span>
-          <div className="grid w-full grid-cols-3 items-center gap-1.5">
-            {tabs.map(({ id, label, icon: Icon }) => <button key={id} onClick={() => setTab(id)} className={`flex h-8 items-center gap-1.5 px-2 ${tab === id ? 'bg-[#2563eb] text-white shadow-[0_8px_18px_rgba(37,99,235,.2)]' : dark ? 'border border-slate-700 bg-slate-900 text-slate-200 hover:border-slate-500' : 'border border-[#d7e5f6] bg-white/80 text-[#0b172a] hover:border-[#93c5fd] hover:bg-[#eff6ff]'}`}><Icon size={14} /><span>{label}</span></button>)}
+          <WorkspaceTabs side />
+        </div>
+      </> : <>
+        <div className={`dock-command-row flex h-11 shrink-0 items-center gap-2 overflow-x-auto border-b px-2 ${dark ? 'border-slate-700' : 'border-[#d7e5f6]'}`}>
+          <div className="flex min-w-max items-center gap-2">
+            <WorkspaceTabs />
+            <span className={`h-6 w-px ${dark ? 'bg-slate-700' : 'bg-[#d7e5f6]'}`} />
+            <QuickActions embedded />
+            <PitchScaleControl embedded />
+            <DockModeSwitcher embedded />
           </div>
         </div>
-      </> : <div className={`flex h-10 shrink-0 items-center border-b px-1.5 ${dark ? 'border-slate-700' : 'border-[#d7e5f6]'}`}>
-        <div className="min-w-0 flex-1 overflow-x-auto overscroll-contain py-1"><ToolRail compact /></div>
-        <div className={`ml-1 flex shrink-0 items-center gap-1 border-l pl-1 ${dark ? 'border-slate-700' : 'border-[#d7e5f6]'}`}>
-          {tabs.map(({ id, label, icon: Icon }) => <button key={id} title={label} aria-label={label} onClick={() => setTab(id)} className={`flex h-8 items-center gap-1 px-2 ${tab === id ? 'bg-[#2563eb] text-white shadow-[0_8px_18px_rgba(37,99,235,.2)]' : dark ? 'text-slate-300 hover:bg-slate-800' : 'text-[#0b172a] hover:bg-[#eff6ff]'}`}>
-            <Icon size={14} />
-            <span className={tab === id ? 'hidden 2xl:inline' : 'hidden'}>{label}</span>
-          </button>)}
+        <div className={`flex h-11 shrink-0 items-center gap-2 border-b px-2 ${dark ? 'border-slate-700' : 'border-[#d7e5f6]'}`}>
+          <span className={`shrink-0 text-[9px] font-black uppercase tracking-[0.16em] ${dark ? 'text-slate-400' : 'text-slate-500'}`}>Board tools</span>
+          <div className="min-w-0 flex-1 overflow-x-auto overscroll-contain py-1"><ToolRail compact /></div>
         </div>
-      </div>}
-      <div className="min-h-0 flex-1 overflow-y-auto overscroll-contain p-1.5 pb-2">
+      </>}
+      <div className="dock-content min-h-0 flex-1 overflow-y-auto overscroll-contain p-2 pb-2.5">
         {tab === 'page' && <PagePanel />}
         {tab === 'style' && <StylePanel />}
         {tab === 'squad' && <SquadPanel />}
