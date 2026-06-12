@@ -572,7 +572,15 @@ export const useTacticsStore = create<Store>()(persist((set, get) => ({
       return points.length >= 6 ? { ...drawing, points } : drawing;
     });
     return {
-      project: { ...project, teams: nextTeams, drawings: nextDrawings, updatedAt: now() },
+      project: {
+        ...project,
+        ball: itemIds.includes('ball')
+          ? { ...project.ball, x: clamp01(project.ball.x + dx), y: clamp01(project.ball.y + dy) }
+          : project.ball,
+        teams: nextTeams,
+        drawings: nextDrawings,
+        updatedAt: now(),
+      },
       historyPast: [...historyPast.slice(-49), snapshotBoard(project)],
       historyFuture: [],
     };

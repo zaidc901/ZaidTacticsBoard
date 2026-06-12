@@ -430,36 +430,10 @@ function FallbackBallSkin({ radius, design }: { radius: number; design: BallDesi
 }
 
 function BallMarker({ ball, mapper }: { ball: Ball; mapper: Mapper }) {
-  const { moveBall, select, selectedIds, playing } = useTacticsStore();
-  const dragRef = useRef<{ x: number; y: number } | null>(null);
+  const { selectedIds, playing } = useTacticsStore();
   const [x, y] = mapper.toAbs(ball.x, ball.y);
   const radius = ball.size / 2 + 0.5;
-  const startDrag = (event: Konva.KonvaEventObject<DragEvent>) => {
-    event.cancelBubble = true;
-    select('ball');
-    const node = event.currentTarget as Konva.Group;
-    dragRef.current = { x: node.x(), y: node.y() };
-    const stage = event.target.getStage();
-    if (!stage) return;
-    stage.container().style.cursor = 'grabbing';
-  };
-  return <Group name="board-item" x={x} y={y} draggable={!ball.locked && !playing}
-    onMouseDown={event => { event.cancelBubble = true; select('ball'); }}
-    onTap={event => { event.cancelBubble = true; select('ball'); }}
-    onMouseMove={(e) => { const stage = e.target.getStage(); if (stage && !playing) stage.container().style.cursor = 'grab'; }}
-    onDragStart={startDrag}
-    onDragEnd={event => {
-      const drag = dragRef.current;
-      if (!drag) return;
-      const node = event.currentTarget as Konva.Group;
-      const relative = mapper.toRel(node.x(), node.y());
-      node.position({ x: drag.x, y: drag.y });
-      moveBall(relative.x, relative.y);
-      dragRef.current = null;
-      const stage = event.target.getStage();
-      if (stage) stage.container().style.cursor = 'grab';
-    }}>
-    <Circle radius={Math.max(20, radius + 11)} fill="rgba(255,255,255,0)" />
+  return <Group id="ball-node" x={x} y={y} listening={false}>
     <BallSkin radius={radius} design={ball.design ?? 'classic'} />
     <Circle radius={radius + 0.55} stroke="#ffffff" strokeWidth={1} opacity={0.96} />
     {!playing && selectedIds.includes('ball') && <Circle radius={radius + 2.3} stroke="#ffffff" strokeWidth={1.6} opacity={1} />}
@@ -966,7 +940,7 @@ function previewTranslatedDrawing(drawing: Drawing, dx: number, dy: number) {
   return { ...drawing, points, followPlayers: drawing.type === 'polygon-zone' ? false : drawing.followPlayers };
 }
 
-function ManagedBoardHitTargets({ players, drawings, mapper }: { players: Player[]; drawings: Drawing[]; mapper: Mapper }) {
+function ManagedBoardHitTargets({ players, ball, drawings, mapper }: { players: Player[]; ball: Ball; drawings: Drawing[]; mapper: Mapper }) {
   return <>
     {drawings.filter(drawing => !drawing.hidden).map(drawing => {
       if (drawing.type === 'zone') {
@@ -988,9 +962,14 @@ function ManagedBoardHitTargets({ players, drawings, mapper }: { players: Player
     })}
     {players.filter(player => player.starter && !player.hidden).map(player => {
       const [x, y] = mapper.toAbs(player.x, player.y);
-      const radius = baseMarkerRadius * clampRange(player.size ?? 1, 0.65, 1.65) + 5;
+      const radius = baseMarkerRadius * clampRange(player.size ?? 1, 0.65, 1.65) + 10;
       return <Circle key={player.id} x={x} y={y} radius={radius} fill="#ffffff" opacity={0.001} />;
     })}
+    {(() => {
+      const [x, y] = mapper.toAbs(ball.x, ball.y);
+      const radius = Math.max(22, ball.size / 2 + 10.5);
+      return <Circle key="ball" x={x} y={y} radius={radius} fill="#ffffff" opacity={0.001} />;
+    })()}
   </>;
 }
 
@@ -1024,7 +1003,10 @@ export function PitchCanvas({ stageRef }: { stageRef: RefObject<Konva.Stage | nu
   };
   const canDraw = tool !== 'select';
   const boardInteractive = !canDraw && !playing;
-  const displayBall = playbackFrame?.ball ?? project.ball;
+  const playbackBall = playbackFrame?.ball ?? project.ball;
+  const displayBall = boardDragPreview?.ids.includes('ball')
+    ? { ...playbackBall, x: clamp01(playbackBall.x + boardDragPreview.dx), y: clamp01(playbackBall.y + boardDragPreview.dy) }
+    : playbackBall;
   const displayPlayers = project.teams.flatMap(t => t.squad).map(player => {
     const playbackPosition = playbackFrame?.playerPositions[player.id];
     const displayed = playbackPosition ? { ...player, ...playbackPosition } : player;
@@ -1084,20 +1066,25 @@ export function PitchCanvas({ stageRef }: { stageRef: RefObject<Konva.Stage | nu
     if (canDraw || playing) return false;
     const rel = pointerRel(stage);
     const pointer = mapper.toAbs(rel.x, rel.y);
-    const player = displayPlayers
+    const ballCenter = mapper.toAbs(displayBall.x, displayBall.y);
+    const ballRadius = Math.max(22, displayBall.size / 2 + 10.5);
+    const ball = Math.hypot(pointer[0] - ballCenter[0], pointer[1] - ballCenter[1]) <= ballRadius
+      ? { id: 'ball', locked: displayBall.locked }
+      : undefined;
+    const player = ball ? undefined : displayPlayers
       .filter(candidate => candidate.starter && !candidate.hidden)
       .map(candidate => {
         const center = mapper.toAbs(candidate.x, candidate.y);
-        const radius = baseMarkerRadius * clampRange(candidate.size ?? 1, 0.65, 1.65) + 5;
+        const radius = baseMarkerRadius * clampRange(candidate.size ?? 1, 0.65, 1.65) + 10;
         return { player: candidate, distance: Math.hypot(pointer[0] - center[0], pointer[1] - center[1]), radius };
       })
       .filter(candidate => candidate.distance <= candidate.radius)
       .sort((a, b) => a.distance - b.distance || b.player.zIndex - a.player.zIndex)[0]?.player;
-    const area = player ? undefined : sortedDrawings
+    const area = ball || player ? undefined : sortedDrawings
       .slice()
       .reverse()
       .find(drawing => pointHitsArea(drawing, rel, mapper));
-    const item = player ?? area;
+    const item = ball ?? player ?? area;
     if (!item) return false;
 
     const modifier = 'ctrlKey' in native && (native.ctrlKey || native.metaKey);
@@ -1299,7 +1286,7 @@ export function PitchCanvas({ stageRef }: { stageRef: RefObject<Konva.Stage | nu
             <BallMarker ball={displayBall} mapper={mapper} />
           </Layer>
           <Layer listening={boardInteractive}>
-            <ManagedBoardHitTargets players={displayPlayers} drawings={sortedDrawings} mapper={mapper} />
+            <ManagedBoardHitTargets players={displayPlayers} ball={displayBall} drawings={sortedDrawings} mapper={mapper} />
           </Layer>
           <Layer listening={false}>
             {draftDrawing && <DrawingShape drawing={draftDrawing} mapper={mapper} interactive={false} />}
