@@ -78,10 +78,8 @@ function interpolateDrawings(from: Drawing[], to: Drawing[], progress: number): 
   return Array.from(byId.entries()).flatMap(([id, entry]) => {
     const base = entry.to ?? entry.from;
     if (!base) return [];
-    const fromOpacity = entry.from ? entry.from.opacity : 0;
-    const toOpacity = entry.to ? entry.to.opacity : 0;
-    const opacity = fromOpacity + (toOpacity - fromOpacity) * progress;
-    if (opacity < 0.01) return [];
+    const transitionVisibility = !entry.from ? progress : !entry.to ? 1 - progress : 1;
+    if (transitionVisibility < 0.01) return [];
     const compatible = (!entry.from || !entry.to || entry.from.type === entry.to.type)
       && (entry.from?.points.length ?? entry.to?.points.length) === (entry.to?.points.length ?? entry.from?.points.length);
     // Entering and exiting objects fade at their real size. Collapsing their
@@ -102,11 +100,12 @@ function interpolateDrawings(from: Drawing[], to: Drawing[], progress: number): 
       fill: interpolateColor(startDrawing.fill, endDrawing.fill, progress),
       stripeColor: interpolateColor(startDrawing.stripeColor, endDrawing.stripeColor, progress),
       strokeWidth: startDrawing.strokeWidth + (endDrawing.strokeWidth - startDrawing.strokeWidth) * progress,
-      opacity,
+      opacity: startDrawing.opacity + (endDrawing.opacity - startDrawing.opacity) * progress,
       dashed: progress < 0.5 ? startDrawing.dashed : endDrawing.dashed,
       hidden: false,
       transitionFromFillPattern: patternChanged ? startDrawing.fillPattern : undefined,
       fillPatternTransition: patternChanged ? progress : undefined,
+      transitionVisibility,
     }];
   });
 }

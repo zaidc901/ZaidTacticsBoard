@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { AlertTriangle, BadgeHelp, Circle as CircleIcon, CircleDot, Copy, Download, Eraser, EyeOff, Film, Frown, ImageDown, ImagePlus, Link2, Minus, Moon, MousePointer2, MoveHorizontal, MoveRight, MoveVertical, Palette, PanelBottom, PanelRight, Pencil, Play, Plus, Redo2, RotateCcw, Route, Settings2, Shield, SlidersHorizontal, Square, Trash2, Type, Undo2, Unlink2, UserMinus, UsersRound } from 'lucide-react';
+import { AlertTriangle, BadgeHelp, Circle as CircleIcon, CircleDot, Copy, Download, Eraser, Eye, EyeOff, Film, Frown, ImageDown, ImagePlus, Link2, Minus, Moon, MousePointer2, MoveHorizontal, MoveRight, MoveVertical, Palette, PanelBottom, PanelRight, Pencil, Play, Plus, Redo2, RotateCcw, Route, Settings2, Shield, SlidersHorizontal, Square, Trash2, Type, Undo2, Unlink2, UserMinus, UsersRound } from 'lucide-react';
 import { formations, FormationKey } from '../data/formations';
 import { flagImageUrlByPresetId, presetCollections, PresetCollectionId, teamPresetById, teamPresets, TeamPreset } from '../data/teamPresets';
 import { useTacticsStore } from '../store/tacticsStore';
@@ -128,11 +128,11 @@ function FlagNumberChip({ flagId, badgeImage, showFlag = true, color, number, sh
   const visibleFlag = showFlag ? preset : undefined;
   const hasBadge = Boolean(badgeImage || visibleFlag);
   const dimension = size === 'sm' ? 'h-7 w-7 text-[10px]' : 'h-8 w-8 text-[11px]';
-  return <span className={`relative grid shrink-0 place-items-center overflow-hidden rounded-full font-black text-[#07111f] ring-1 ring-white/80 ${dimension}`} style={{ background: visibleFlag ? flagBackground(visibleFlag) : color }}>
+  return <span className={`relative shrink-0 overflow-hidden rounded-full font-black text-[#07111f] ring-1 ring-white/80 ${dimension}`} style={{ background: visibleFlag ? flagBackground(visibleFlag) : color }}>
     {visibleFlag && <img src={flagImageUrlByPresetId[visibleFlag.id]} alt="" className="absolute inset-0 h-full w-full object-cover" loading="lazy" draggable={false} onError={event => { event.currentTarget.style.display = 'none'; }} />}
     {badgeImage && <img src={badgeImage} alt="" className="absolute inset-0 h-full w-full object-cover" draggable={false} />}
     {hasBadge && <span className="absolute inset-0 bg-white/10" />}
-    {showNumber && <span className={`relative ${hasBadge ? 'drop-shadow-[0_1px_2px_rgba(255,255,255,.95)]' : 'text-white drop-shadow-[0_1px_2px_rgba(0,0,0,.35)]'}`}>{number}</span>}
+    {showNumber && <span className={`absolute inset-0 z-10 grid place-items-center leading-none ${hasBadge ? 'drop-shadow-[0_1px_2px_rgba(255,255,255,.95)]' : 'text-white drop-shadow-[0_1px_2px_rgba(0,0,0,.35)]'}`}>{number}</span>}
   </span>;
 }
 
@@ -335,11 +335,15 @@ function WorkspaceTabs({ side = false }: { side?: boolean }) {
 }
 
 function PagePanel() {
-  const { project, viewZoom, setViewZoom, setBoardFormat, updateSettings, updateBall } = useTacticsStore();
+  const { project, viewZoom, setViewZoom, setBoardFormat, updateSettings, updateBall, resetElevenAside } = useTacticsStore();
   const dark = project.settings.theme === 'dark';
   const pitchScaleX = project.settings.pitchScaleX ?? 1;
   const pitchScaleY = project.settings.pitchScaleY ?? 1;
   const toggleDark = () => updateSettings({ theme: dark ? 'portfolio-light' : 'dark', backgroundColor: dark ? '#edf6ff' : '#111827', grassColor: dark ? '#73ad7a' : '#315f43', lineColor: dark ? '#f8fbff' : '#dbeafe' });
+  const resetBoard = () => {
+    resetElevenAside();
+    setViewZoom(1.08);
+  };
   return <div className="dock-page-grid grid gap-2 lg:grid-cols-2 xl:grid-cols-[.85fr_1.05fr_1.15fr_1.1fr]">
     <section className={panelClass('space-y-2', dark)}>
       <p className="text-[10px] font-black uppercase tracking-[0.22em] text-[#2563eb]">Views</p>
@@ -363,8 +367,8 @@ function PagePanel() {
         <p className="text-[10px] font-black uppercase tracking-[0.22em] text-[#2563eb]">Grid</p>
         <div className="flex items-center gap-1">
           <button title="Pep zones" onClick={() => updateSettings({ pepZones: !project.settings.pepZones })} className={`h-8 rounded-lg border px-2 text-[10px] font-black ${project.settings.pepZones ? 'border-[#2563eb] bg-[#2563eb] text-white' : 'border-[#d7e5f6] bg-white/80 text-[#0b172a] hover:border-[#2563eb]'}`}>Zones</button>
-          <button title="Reset pitch to 11-a-side baseline" onClick={() => updateSettings({ pitchScaleX: 1, pitchScaleY: 1 })} className="flex h-8 items-center gap-1 rounded-lg border border-[#d7e5f6] bg-white/80 px-2 text-[10px] font-black text-[#0b172a] hover:border-[#2563eb]">
-            <RotateCcw size={12} /> 11
+          <button title="Restore both teams to the default 11 circle markers" onClick={resetBoard} className="flex h-8 items-center gap-1 rounded-lg border border-[#d7e5f6] bg-white/80 px-2 text-[10px] font-black text-[#0b172a] hover:border-[#2563eb]">
+            <RotateCcw size={12} /> Reset 11
           </button>
           <button title="Toggle dark mode" onClick={toggleDark} className={`grid h-8 w-8 place-items-center rounded-lg border ${dark ? 'border-[#60a5fa] bg-[#60a5fa] text-[#0b172a]' : 'border-[#d7e5f6] bg-white/80 text-[#0b172a] hover:border-[#2563eb]'}`}>
             <Moon size={14} />
@@ -409,6 +413,18 @@ function SquadPanel() {
     <div className="dock-team-grid grid gap-3 lg:grid-cols-2">
       {project.teams.map(team => {
         const onFieldCount = team.squad.filter(player => player.starter && !player.hidden).length;
+        const starters = team.squad.filter(player => player.starter && !player.hidden);
+        const bench = team.squad.filter(player => !player.starter || player.hidden);
+        const playerChip = (player: (typeof team.squad)[number]) => {
+          const label = player.displayName.trim();
+          return <button key={player.id} onClick={() => select(player.id)} className={`flex min-w-24 items-center gap-2 rounded-lg border px-2 py-1.5 text-left ${player.starter && !player.hidden ? 'border-[#bfdbfe] bg-[#eff6ff]' : 'border-[#d7e5f6] bg-white/80'} ${selectedId === player.id ? 'ring-2 ring-[#2563eb]' : ''}`}>
+            <FlagNumberChip flagId={player.flag} badgeImage={team.badge} showFlag={team.showBadge ?? true} color={player.color} number={player.number} showNumber={(team.showNumbers ?? true) && (player.showNumber ?? true)} size="sm" />
+            <span className="min-w-0 flex-1">
+              <span className="block truncate text-xs font-black text-[#0b172a]">{label || `#${player.number}`}</span>
+              <span className="block text-[10px] font-black uppercase tracking-[0.12em] text-slate-500">{player.starter && !player.hidden ? 'Pitch' : 'Bench'}</span>
+            </span>
+          </button>;
+        };
         return <section key={team.id} className={panelClass('space-y-2', dark)}>
         <div className="flex flex-wrap items-center gap-2">
           <span className="h-8 w-8 rounded-lg border border-[#d7e5f6]" style={{ background: `linear-gradient(135deg, ${team.primaryColor} 0 52%, ${team.goalkeeperColor} 52% 100%)` }} />
@@ -438,17 +454,17 @@ function SquadPanel() {
           </label>
           {team.badge && <button title="Remove team badge" onClick={() => updateTeam(team.id, { badge: undefined })} className="grid h-9 w-9 place-items-center rounded-lg bg-red-50 text-red-600 ring-1 ring-red-100"><Trash2 size={14} /></button>}
         </div>
-        <div className="flex gap-2 overflow-x-auto pb-1">
-          {team.squad.map(player => {
-            const label = player.displayName.trim();
-            return <button key={player.id} onClick={() => select(player.id)} className={`flex min-w-24 items-center gap-2 rounded-lg border px-2 py-1.5 text-left ${player.starter ? 'border-[#bfdbfe] bg-[#eff6ff]' : 'border-[#d7e5f6] bg-white/80'} ${selectedId === player.id ? 'ring-2 ring-[#2563eb]' : ''}`}>
-              <FlagNumberChip flagId={player.flag} badgeImage={team.badge} showFlag={team.showBadge ?? true} color={player.color} number={player.number} showNumber={(team.showNumbers ?? true) && (player.showNumber ?? true)} size="sm" />
-              <span className="min-w-0 flex-1">
-                <span className="block truncate text-xs font-black text-[#0b172a]">{label || `#${player.number}`}</span>
-                <span className="block text-[10px] font-black uppercase tracking-[0.12em] text-slate-500">{player.starter ? 'Pitch' : 'Bench'}</span>
-              </span>
-            </button>;
-          })}
+        <div className="grid gap-2">
+          <div>
+            <p className="mb-1 text-[9px] font-black uppercase tracking-[0.16em] text-[#2563eb]">On pitch · {starters.length}</p>
+            <div className="flex gap-2 overflow-x-auto pb-1">{starters.map(playerChip)}</div>
+          </div>
+          <div className="rounded-lg border border-[#d7e5f6] bg-white/50 p-1.5">
+            <p className="mb-1 text-[9px] font-black uppercase tracking-[0.16em] text-slate-500">Bench · {bench.length}</p>
+            {bench.length > 0
+              ? <div className="flex gap-2 overflow-x-auto pb-1">{bench.map(playerChip)}</div>
+              : <p className="px-1 py-1 text-[10px] font-semibold text-slate-500">No substitutes yet. Add a player to create the bench.</p>}
+          </div>
         </div>
       </section>})}
     </div>
@@ -686,7 +702,7 @@ function ScenesPanel({ onPreviewAnimation, onExportVideo }: Pick<ControlDockProp
   return <div className="space-y-3">
     <div className="flex flex-wrap items-center gap-2">
       <button onClick={addScene} className="flex h-9 items-center gap-2 rounded-lg bg-[#2563eb] px-3 text-sm font-black text-white"><Plus size={16} /> Scene</button>
-      <button onClick={onPreviewAnimation} disabled={playing || project.scenes.length < 2} className="flex h-9 items-center gap-2 rounded-lg border border-[#d7e5f6] bg-white/80 px-3 text-sm font-black text-[#0b172a] disabled:opacity-40"><Play size={16} /> Preview</button>
+      <button onClick={onPreviewAnimation} disabled={playing || project.scenes.length < 2} className="flex h-9 items-center gap-2 rounded-lg border border-[#d7e5f6] bg-white/80 px-3 text-sm font-black text-[#0b172a] disabled:opacity-40"><Play size={16} /> Play animation</button>
       <div className="flex items-center gap-1 rounded-lg border border-[#d7e5f6] bg-white/70 p-1">
         {exportRegions.map(option => <button key={option.id} onClick={() => setRegion(option.id)} className={`h-7 rounded-md px-2 text-[10px] font-black ${region === option.id ? 'bg-[#2563eb] text-white' : 'text-[#0b172a] hover:bg-[#eff6ff]'}`}>
           {option.label}
@@ -698,7 +714,7 @@ function ScenesPanel({ onPreviewAnimation, onExportVideo }: Pick<ControlDockProp
       {project.scenes.length === 0 && <div className="rounded-lg border border-dashed border-[#d7e5f6] bg-white/70 px-4 py-3 text-sm font-semibold text-slate-500">Capture two scenes to preview movement.</div>}
       {project.scenes.map((scene, index) => <section key={scene.id} className={panelClass('min-w-64', dark)}>
         <div className="flex items-center gap-2">
-          <button onClick={() => applyScene(scene.id)} className="grid h-8 w-8 place-items-center rounded-lg bg-[#2563eb] text-sm font-black text-white">{index + 1}</button>
+          <span className="grid h-8 w-8 shrink-0 place-items-center rounded-lg bg-[#2563eb] text-sm font-black text-white">{index + 1}</span>
           <input className="min-w-0 flex-1 bg-transparent text-sm font-black text-[#0b172a] outline-none" value={scene.name} onChange={e => renameScene(scene.id, e.target.value)} />
         </div>
         <div className="mt-2 grid grid-cols-2 gap-2">
@@ -710,6 +726,7 @@ function ScenesPanel({ onPreviewAnimation, onExportVideo }: Pick<ControlDockProp
           </label>
         </div>
         <div className="mt-2 flex gap-2">
+          <button onClick={() => applyScene(scene.id)} className="flex flex-1 items-center justify-center gap-1.5 rounded-lg bg-[#eff6ff] px-2 py-2 text-xs font-black text-[#1d4ed8] ring-1 ring-[#bfdbfe]"><Eye size={14} /> Preview scene</button>
           <button onClick={() => duplicateScene(scene.id)} className="rounded-lg bg-white p-2 text-[#0b172a] ring-1 ring-[#d7e5f6]"><Copy size={14} /></button>
           <button onClick={() => deleteScene(scene.id)} className="rounded-lg bg-red-50 p-2 text-red-600 ring-1 ring-red-100"><Trash2 size={14} /></button>
         </div>

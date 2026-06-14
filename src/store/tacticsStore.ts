@@ -351,6 +351,7 @@ interface Store {
   updatePlayer: (playerId: string, patch: Partial<Player>) => void;
   setPlayerStarter: (playerId: string, starter: boolean) => void;
   setTeamPlayerCount: (teamId: string, count: number) => void;
+  resetElevenAside: () => void;
   placePlayer: (playerId: string, x: number, y: number) => void;
   addPlayer: (teamId: string) => void;
   removePlayer: (playerId: string) => void;
@@ -490,6 +491,39 @@ export const useTacticsStore = create<Store>()(persist((set, get) => ({
       },
     };
   }),
+  resetElevenAside: () => set(({ project, historyPast }) => ({
+    project: {
+      ...project,
+      settings: { ...project.settings, pitchScaleX: 1, pitchScaleY: 1 },
+      teams: project.teams.map((team, index) => {
+        const seed = index + 1;
+        const primaryColor = seed === 1 ? '#1d4ed8' : '#0b172a';
+        const secondaryColor = seed === 1 ? '#eff6ff' : '#bfdbfe';
+        const goalkeeperColor = seed === 1 ? '#f59e0b' : '#7c3aed';
+        const formation: FormationKey = '4-3-3';
+        return {
+          ...team,
+          name: `Team ${seed}`,
+          shortName: seed === 1 ? 'T1' : 'T2',
+          primaryColor,
+          secondaryColor,
+          goalkeeperColor,
+          formation,
+          preset: undefined,
+          badge: undefined,
+          showBadge: true,
+          showNumbers: true,
+          showNames: true,
+          squad: makeBaseplateSquad(team.id, seed, primaryColor, secondaryColor, formation, project.settings.format, index === 1, goalkeeperColor),
+        };
+      }),
+      updatedAt: now(),
+    },
+    selectedId: undefined,
+    selectedIds: [],
+    historyPast: [...historyPast.slice(-49), snapshotBoard(project)],
+    historyFuture: [],
+  })),
   placePlayer: (playerId, x, y) => set(({ project }) => ({ project: { ...project, teams: project.teams.map(team => ({ ...team, squad: team.squad.map(player => player.id === playerId ? { ...player, starter: true, hidden: false, x, y } : player) })), updatedAt: now() } })),
   addPlayer: (teamId) => set(({ project }) => ({ project: { ...project, teams: project.teams.map(t => t.id === teamId ? { ...t, squad: [...t.squad, { id: id(), teamId, fullName: '', displayName: '', number: t.squad.length + 1, position: 'SUB', x: 0.5, y: 0.5, color: t.primaryColor, secondaryColor: t.secondaryColor, outline: '#fff', opacity: 1, labelPosition: 'bottom', markerStyle: 'circle', showNumber: true, starter: false, locked: false, hidden: false, zIndex: 99 }] } : t), updatedAt: now() } })),
   removePlayer: (playerId) => set(({ project, selectedIds }) => ({ project: { ...project, teams: project.teams.map(t => ({ ...t, squad: t.squad.filter(p => p.id !== playerId) })), updatedAt: now() }, selectedId: undefined, selectedIds: selectedIds.filter(id => id !== playerId) })),
@@ -555,14 +589,19 @@ export const useTacticsStore = create<Store>()(persist((set, get) => ({
     historyFuture: [],
   })),
   moveSelectedItems: (itemIds, dx, dy) => set(({ project, historyPast }) => {
+    const fixedFollowAreaIds = new Set(project.drawings
+      .filter(drawing => drawing.type === 'polygon-zone' && drawing.followPlayers)
+      .map(drawing => drawing.id));
+    const movableItemIds = itemIds.filter(itemId => !fixedFollowAreaIds.has(itemId));
+    if (!movableItemIds.length) return {};
     const nextTeams = project.teams.map(team => ({
       ...team,
-      squad: team.squad.map(player => itemIds.includes(player.id)
+      squad: team.squad.map(player => movableItemIds.includes(player.id)
         ? { ...player, x: clamp01(player.x + dx), y: clamp01(player.y + dy) }
         : player),
     }));
     const playerPositions = new Map(nextTeams.flatMap(team => team.squad.map(player => [player.id, { x: player.x, y: player.y }] as const)));
-    const movedDrawings = project.drawings.map(drawing => itemIds.includes(drawing.id) ? translateDrawing(drawing, dx, dy) : drawing);
+    const movedDrawings = project.drawings.map(drawing => movableItemIds.includes(drawing.id) ? translateDrawing(drawing, dx, dy) : drawing);
     const nextDrawings = movedDrawings.map(drawing => {
       if (drawing.type !== 'polygon-zone' || !drawing.followPlayers || !drawing.linkedPlayerIds?.length) return drawing;
       const points = drawing.linkedPlayerIds.flatMap(playerId => {
@@ -574,7 +613,7 @@ export const useTacticsStore = create<Store>()(persist((set, get) => ({
     return {
       project: {
         ...project,
-        ball: itemIds.includes('ball')
+        ball: movableItemIds.includes('ball')
           ? { ...project.ball, x: clamp01(project.ball.x + dx), y: clamp01(project.ball.y + dy) }
           : project.ball,
         teams: nextTeams,

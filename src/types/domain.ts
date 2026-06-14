@@ -91,6 +91,7 @@ export interface Drawing {
 export interface PlaybackDrawing extends Drawing {
   transitionFromFillPattern?: FillPattern;
   fillPatternTransition?: number;
+  transitionVisibility?: number;
 }
 
 export interface Scene {
