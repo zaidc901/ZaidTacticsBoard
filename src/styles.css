@@ -147,6 +147,62 @@ input[type='color'] { min-height: 2.25rem; border-radius: .75rem; border: 1px so
 ::-webkit-scrollbar-thumb { background: rgba(37,99,235,.24); border: 2px solid transparent; border-radius: 999px; background-clip: padding-box; }
 ::-webkit-scrollbar-thumb:hover { background: rgba(37,99,235,.4); background-clip: padding-box; }
 
+.video-analysis-shell.video-dark {
+  color-scheme: dark;
+  background:
+    linear-gradient(90deg, rgba(20,184,166,.07) 1px, transparent 1px),
+    linear-gradient(0deg, rgba(96,165,250,.07) 1px, transparent 1px),
+    radial-gradient(circle at 18% 10%, rgba(37,99,235,.28), transparent 34%),
+    linear-gradient(135deg, #020617, #0f172a 48%, #111827);
+  color: #e5efff;
+}
+.video-analysis-shell.video-dark .video-analysis-header,
+.video-analysis-shell.video-dark aside,
+.video-analysis-shell.video-dark .dock-panel,
+.video-analysis-shell.video-dark .bg-white\/76,
+.video-analysis-shell.video-dark .bg-white\/82,
+.video-analysis-shell.video-dark .bg-white\/88,
+.video-analysis-shell.video-dark .bg-white\/95,
+.video-analysis-shell.video-dark .bg-white\/80,
+.video-analysis-shell.video-dark .bg-white\/86,
+.video-analysis-shell.video-dark .bg-white\/70,
+.video-analysis-shell.video-dark .bg-\[\#f8fbff\] {
+  background-color: rgba(15, 23, 42, .86) !important;
+  border-color: #334155 !important;
+}
+.video-analysis-shell.video-dark .text-\[\#0b172a\],
+.video-analysis-shell.video-dark .text-\[\#07111f\],
+.video-analysis-shell.video-dark .text-slate-500,
+.video-analysis-shell.video-dark .text-slate-600 {
+  color: #dbeafe !important;
+}
+.video-analysis-shell.video-dark input,
+.video-analysis-shell.video-dark select {
+  background-color: rgba(2, 6, 23, .72) !important;
+  border-color: #334155 !important;
+  color: #e5efff !important;
+}
+.video-analysis-shell.video-dark button:not(.bg-\[\#2563eb\]):not(.bg-red-600):not(.bg-\[\#0f766e\]) {
+  border-color: #334155 !important;
+  background-color: rgba(15, 23, 42, .82) !important;
+  color: #e5efff !important;
+}
+.video-analysis-shell.video-dark .border-\[\#d7e5f6\],
+.video-analysis-shell.video-dark .border-\[\#bfdbfe\] {
+  border-color: #334155 !important;
+}
+.video-analysis-shell.video-dark .bg-\[\#eff6ff\] {
+  background-color: rgba(37, 99, 235, .22) !important;
+}
+.video-analysis-shell.video-dark .video-canvas-area {
+  background:
+    linear-gradient(90deg, rgba(34,211,238,.06) 1px, transparent 1px),
+    linear-gradient(0deg, rgba(96,165,250,.055) 1px, transparent 1px),
+    radial-gradient(circle at 18% 12%, rgba(37,99,235,.24), transparent 32%),
+    linear-gradient(135deg, #020617, #0b1220 48%, #101827) !important;
+  background-size: 70px 70px, 70px 70px, auto, auto !important;
+}
+
 @media (max-height: 700px) {
   .dock-bottom { height: 210px !important; }
 }

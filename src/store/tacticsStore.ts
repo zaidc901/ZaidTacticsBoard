@@ -117,11 +117,11 @@ const defaultSettings: BoardSettings = {
   ...boardViews.portrait,
   customWidth: 1280,
   customHeight: 1920,
-  grassColor: '#73ad7a',
-  lineColor: '#f8fbff',
+  grassColor: '#315f43',
+  lineColor: '#dbeafe',
   lineThickness: 4,
   stripeIntensity: 0.1,
-  backgroundColor: '#edf6ff',
+  backgroundColor: '#111827',
   border: true,
   pitchScaleX: 1,
   pitchScaleY: 1,
@@ -130,7 +130,7 @@ const defaultSettings: BoardSettings = {
   pepZones: false,
   linkedAreasFollowPlayers: true,
   selectionColor: '#facc15',
-  theme: 'portfolio-light',
+  theme: 'dark',
   accentColor: '#2563eb',
 };
 
@@ -710,16 +710,26 @@ export const useTacticsStore = create<Store>()(persist((set, get) => ({
   importProject: (project) => set({ project: { ...project, updatedAt: now() }, historyPast: [], historyFuture: [] }),
 }), {
   name: 'tactical-studio-session-v5',
-  version: 9,
+  version: 10,
   storage: createJSONStorage(() => sessionStorage),
   migrate: (persisted) => {
     const state = persisted as Partial<Store>;
     if (!state.project) return state as Store;
+    const previousSettings = state.project.settings ?? {};
+    const migratedSettings = { ...defaultSettings, ...previousSettings };
+    if (!previousSettings.theme || previousSettings.theme === 'portfolio-light') {
+      Object.assign(migratedSettings, {
+        theme: 'dark',
+        backgroundColor: '#111827',
+        grassColor: '#315f43',
+        lineColor: '#dbeafe',
+      });
+    }
     return {
       ...state,
       project: {
         ...state.project,
-        settings: { ...defaultSettings, ...state.project.settings },
+        settings: migratedSettings,
         ball: { ...state.project.ball, size: 15 },
         teams: state.project.teams.map(team => ({
           ...team,

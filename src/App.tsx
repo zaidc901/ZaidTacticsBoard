@@ -1,12 +1,21 @@
-import { useCallback, useRef } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import Konva from 'konva';
 import { ControlDock, DockModeSwitcher, PitchScaleControl, QuickActions } from './components/ControlDock';
 import { PitchCanvas } from './components/PitchCanvas';
+import { StudioHome } from './components/StudioHome';
+import { VideoAnalysisTool } from './components/VideoAnalysisTool';
 import { useTacticsStore } from './store/tacticsStore';
 import { Drawing, ExportRegion, PlaybackDrawing, PlaybackFrame, Scene } from './types/domain';
 import { exportStageImage, recordStageAnimation } from './utils/exporters';
 
 const nextFrame = () => new Promise<void>(resolve => requestAnimationFrame(() => resolve()));
+type AppMode = 'home' | 'board' | 'video';
+
+function modeFromHash(): AppMode {
+  const hash = window.location.hash.replace('#', '');
+  if (hash === 'board' || hash === 'video') return hash;
+  return 'home';
+}
 
 function ease(progress: number, mode: Scene['transition']) {
   if (mode === 'linear') return progress;
@@ -120,8 +129,20 @@ function sceneFrame(scene: Scene): PlaybackFrame {
 
 export default function App() {
   const stageRef = useRef<Konva.Stage | null>(null);
+  const [mode, setMode] = useState<AppMode>(() => modeFromHash());
   const dark = useTacticsStore(s => s.project.settings.theme === 'dark');
   const dockPosition = useTacticsStore(s => s.dockPosition);
+
+  useEffect(() => {
+    const syncMode = () => setMode(modeFromHash());
+    window.addEventListener('hashchange', syncMode);
+    return () => window.removeEventListener('hashchange', syncMode);
+  }, []);
+
+  const openMode = useCallback((nextMode: AppMode) => {
+    window.location.hash = nextMode === 'home' ? '' : nextMode;
+    setMode(nextMode);
+  }, []);
 
   const playScenes = useCallback(async (captureFrame?: () => void, keepFinalFrame = false) => {
     const store = useTacticsStore.getState();
@@ -162,9 +183,13 @@ export default function App() {
       .finally(() => useTacticsStore.getState().clearPlaybackFrame());
   }, [playScenes]);
 
+  if (mode === 'home') return <StudioHome onOpenBoard={() => openMode('board')} onOpenVideo={() => openMode('video')} />;
+
+  if (mode === 'video') return <VideoAnalysisTool onHome={() => openMode('home')} onOpenBoard={() => openMode('board')} />;
+
   return <div className={`tactics-shell flex h-screen h-[100dvh] overflow-hidden ${dockPosition === 'right' ? 'flex-row' : 'flex-col'} ${dark ? 'tactics-dark bg-slate-950 text-slate-100' : 'bg-[#f6f9ff] text-[#0b172a]'}`}>
     <main className="relative min-h-0 min-w-0 flex-1 overflow-hidden">
-      <PitchCanvas stageRef={stageRef} />
+      <PitchCanvas stageRef={stageRef} onHome={() => openMode('home')} />
       {dockPosition === 'hidden' && <div className="pointer-events-none absolute bottom-3 left-1/2 z-40 flex max-w-[calc(100%-1.5rem)] -translate-x-1/2 flex-wrap items-center justify-center gap-2">
         <DockModeSwitcher />
         <PitchScaleControl />
