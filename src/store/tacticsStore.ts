@@ -1,6 +1,7 @@
 import { create } from 'zustand';
 import { createJSONStorage, persist } from 'zustand/middleware';
 import { formations, FormationKey } from '../data/formations';
+import { presetStartingLineups, PresetStartingLineupPlayer } from '../data/presetStartingLineups';
 import { teamPresetById } from '../data/teamPresets';
 import worldCupSquadsByPresetId from '../data/worldCupSquads.generated.json';
 import { Ball, BoardFormat, BoardSettings, DockPosition, DockTab, Drawing, PlaybackFrame, Player, Project, Scene, Team, Tool, ToolStyle } from '../types/domain';
@@ -224,6 +225,65 @@ function placeholderSquad() {
   }));
 }
 
+function normalizedRosterText(value = '') {
+  return value
+    .replace(/[\u00d8\u00f8]/g, 'o')
+    .replace(/[\u0131\u0130]/g, 'i')
+    .replace(/[\u011e\u011f]/g, 'g')
+    .replace(/[\u015e\u015f]/g, 's')
+    .replace(/[\u00c7\u00e7]/g, 'c')
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, ' ')
+    .trim();
+}
+
+function positionForLineupRole(role: string) {
+  if (role === 'GK') return 'GK';
+  if (['LB', 'LCB', 'CB', 'RCB', 'RB'].includes(role)) return 'DF';
+  if (['LW', 'LST', 'ST', 'RST', 'RW'].includes(role)) return 'FW';
+  return 'MF';
+}
+
+function lineupMatchScore(entry: PresetStartingLineupPlayer, player: PresetSquadPlayer) {
+  const target = normalizedRosterText(entry.matchName ?? entry.name);
+  const name = normalizedRosterText(player.name);
+  if (!target || !name) return 0;
+  if (target === name) return 220;
+  const targetParts = target.split(' ').filter(Boolean);
+  const nameParts = name.split(' ').filter(Boolean);
+  const targetLast = targetParts[targetParts.length - 1] ?? target;
+  let score = 0;
+  if (name.includes(target) || target.includes(name)) score += 90;
+  if (nameParts.includes(targetLast)) score += 45;
+  targetParts.forEach(part => {
+    if (nameParts.includes(part)) score += 14;
+  });
+  if (targetParts.length > 1 && nameParts[0]?.startsWith(targetParts[0][0])) score += 8;
+  if (player.pos === positionForLineupRole(entry.role)) score += 18;
+  return score;
+}
+
+function rosterFromStartingLineup(presetId: string, roster: PresetSquadPlayer[]) {
+  const lineup = presetStartingLineups[presetId];
+  if (!lineup) return undefined;
+  const used = new Set<PresetSquadPlayer>();
+  let nextNumber = Math.max(0, ...roster.map(player => player.no)) + 1;
+  const starters = lineup.players.map((entry): PresetSquadPlayer => {
+    const match = roster
+      .filter(player => !used.has(player))
+      .map(player => ({ player, score: lineupMatchScore(entry, player) }))
+      .sort((a, b) => b.score - a.score)[0];
+    if (match && match.score >= 45) {
+      used.add(match.player);
+      return { ...match.player, pos: positionForLineupRole(entry.role) };
+    }
+    return { no: nextNumber++, pos: positionForLineupRole(entry.role), name: entry.name };
+  });
+  return [...starters, ...roster.filter(player => !used.has(player))];
+}
+
 function orderRosterForFormation(roster: PresetSquadPlayer[], formation: string) {
   const parts = formation.split('-').map(value => Number(value)).filter(Boolean);
   const defenderCount = parts[0] ?? 4;
@@ -250,8 +310,11 @@ function orderRosterForFormation(roster: PresetSquadPlayer[], formation: string)
 
 function makePresetSquad(teamId: string, presetId: string, format: BoardFormat, away = false): Player[] {
   const preset = teamPresetById[presetId] ?? teamPresetById.iraq;
-  const coords = formations[preset.formation] ?? formations['4-3-3'];
-  const base = orderRosterForFormation(worldCupSquads[preset.id] ?? placeholderSquad(), preset.formation);
+  const lineup = presetStartingLineups[preset.id];
+  const formation = lineup?.formation ?? preset.formation;
+  const coords = formations[formation] ?? formations['4-3-3'];
+  const roster = worldCupSquads[preset.id] ?? placeholderSquad();
+  const base = rosterFromStartingLineup(preset.id, roster) ?? orderRosterForFormation(roster, formation);
   return base.map((item, index) => {
     const fullName = item.name ?? '';
     const displayName = labelFromName(fullName);
@@ -539,7 +602,7 @@ export const useTacticsStore = create<Store>()(persist((set, get) => ({
       if (team.id !== teamId) return team;
       const preset = teamPresetById[presetId] ?? teamPresetById.iraq;
       const goalkeeperColor = preset.secondaryColor === '#ffffff' ? '#f59e0b' : preset.secondaryColor;
-      return { ...team, name: preset.name, shortName: preset.initials, primaryColor: preset.primaryColor, secondaryColor: preset.secondaryColor, goalkeeperColor, formation: preset.formation, preset: preset.id, showBadge: team.showBadge ?? true, squad: makePresetSquad(team.id, preset.id, project.settings.format, index === 1) };
+      return { ...team, name: preset.name, shortName: preset.initials, primaryColor: preset.primaryColor, secondaryColor: preset.secondaryColor, goalkeeperColor, formation: presetStartingLineups[preset.id]?.formation ?? preset.formation, preset: preset.id, showBadge: team.showBadge ?? true, squad: makePresetSquad(team.id, preset.id, project.settings.format, index === 1) };
     });
     const nextProject = { ...project, teams: nextTeams, updatedAt: now() };
     return { project: nextProject, selectedId: undefined, selectedIds: [], playbackFrame: entryX === undefined ? undefined : entryPlaybackFrame(nextProject, teamId, entryX) };

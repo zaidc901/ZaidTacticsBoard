@@ -1,9 +1,9 @@
 import { ChangeEvent, DragEvent as ReactDragEvent, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import Konva from 'konva';
-import { ArrowLeft, Circle as CircleIcon, Copy, Download, Eraser, Eye, EyeOff, Film, Gauge, Grid3X3, Home, KeyRound, Lock, Moon, MousePointer2, MoveRight, Pause, Play, Plus, Route, Scissors, Snowflake, Sparkles, Square, Sun, Trash2, Type, Unlock, Upload, Video, X } from 'lucide-react';
+import { ArrowLeft, ArrowRight, Circle as CircleIcon, Copy, Download, Eraser, Eye, EyeOff, Film, Gauge, Grid3X3, Home, KeyRound, Lock, Moon, MousePointer2, MoveRight, Pause, Play, Plus, Redo2, Route, Scissors, Snowflake, Sparkles, Square, Sun, Trash2, Type, Undo2, Unlock, Upload, Video, X } from 'lucide-react';
 import { Arrow, Circle, Ellipse, Group, Layer, Line, Rect, Stage, Text } from 'react-konva';
 
-type VideoTool = 'select' | 'arrow' | 'dashed-line' | 'run' | 'zone' | 'circle-zone' | 'highlight' | 'spotlight' | 'text';
+type VideoTool = 'select' | 'arrow' | 'dashed-line' | 'run' | 'zone' | 'circle-zone' | 'player-circle' | 'connection-line' | 'highlight' | 'spotlight' | 'text';
 type VideoAnnotationType = Exclude<VideoTool, 'select'> | 'polygon-zone';
 type GridMode = 'off' | 'thirds' | 'lanes';
 type OverlayMotion = 'none' | 'fade' | 'pop' | 'slide';
@@ -29,6 +29,7 @@ type VideoAnnotation = {
   id: string;
   type: VideoAnnotationType;
   points: number[];
+  connectionIds?: string[];
   text?: string;
   color: string;
   fill: string;
@@ -85,10 +86,18 @@ type DrawingStyle = {
   opacity: number;
 };
 
+type HistorySnapshot = {
+  annotations: VideoAnnotation[];
+  freezes: FreezeSegment[];
+};
+
 const id = () => crypto.randomUUID();
 const clamp01 = (value: number) => Math.max(0, Math.min(1, value));
 const clampRange = (value: number, min: number, max: number) => Math.max(min, Math.min(max, value));
 const nextFrame = () => new Promise<void>(resolve => requestAnimationFrame(() => resolve()));
+const wait = (ms: number) => new Promise<void>(resolve => window.setTimeout(resolve, Math.max(0, ms)));
+const FRAME_STEP_SECONDS = 1 / 30;
+const HIT_FILL = 'rgba(255,255,255,0.01)';
 
 const defaultStyle: DrawingStyle = {
   color: '#38bdf8',
@@ -104,6 +113,7 @@ const tools: { id: VideoTool; label: string; icon: any }[] = [
   { id: 'run', label: 'Carry run', icon: Route },
   { id: 'zone', label: 'Tactical area', icon: Square },
   { id: 'circle-zone', label: 'Round area', icon: CircleIcon },
+  { id: 'player-circle', label: 'Player disc', icon: CircleIcon },
   { id: 'highlight', label: 'Player ring', icon: CircleIcon },
   { id: 'spotlight', label: 'Spotlight', icon: Sparkles },
   { id: 'text', label: 'Name tag', icon: Type },
@@ -127,6 +137,7 @@ const patternOptions: { id: OverlayPattern; label: string }[] = [
 
 function defaultMotion(type: VideoAnnotationType): OverlayMotion {
   if (type === 'text') return 'fade';
+  if (type === 'player-circle' || type === 'connection-line') return 'fade';
   if (type === 'arrow' || type === 'dashed-line' || type === 'run') return 'slide';
   return 'pop';
 }
@@ -154,11 +165,11 @@ function useElementSize<T extends HTMLElement>() {
 }
 
 function timeLabel(seconds: number) {
-  if (!Number.isFinite(seconds)) return '0:00.0';
+  if (!Number.isFinite(seconds)) return '0:00.00';
   const safe = Math.max(0, seconds);
   const mins = Math.floor(safe / 60);
   const secs = safe - mins * 60;
-  return `${mins}:${secs.toFixed(1).padStart(4, '0')}`;
+  return `${mins}:${secs.toFixed(2).padStart(5, '0')}`;
 }
 
 function makeMapper(width: number, height: number): Mapper {
@@ -170,14 +181,18 @@ function makeMapper(width: number, height: number): Mapper {
   };
 }
 
-function displaySize(container: { width: number; height: number }, video: Pick<VideoClip, 'width' | 'height'> | undefined, zoom = 1) {
+function displaySize(container: { width: number; height: number }, video: Pick<VideoClip, 'width' | 'height'> | undefined) {
   const ratio = Math.max(0.1, (video?.width || 1280) / (video?.height || 720));
-  const maxWidth = Math.max(280, container.width - 28);
-  const maxHeight = Math.max(260, container.height - 28);
-  const fitted = maxWidth / maxHeight > ratio
-    ? { width: maxHeight * ratio, height: maxHeight }
-    : { width: maxWidth, height: maxWidth / ratio };
-  return { width: Math.round(fitted.width * zoom), height: Math.round(fitted.height * zoom) };
+  const targetWidth = Math.min(1152, Math.max(360, container.width - 16));
+  return { width: Math.round(targetWidth), height: Math.round(targetWidth / ratio) };
+}
+
+function scaledSize(size: { width: number; height: number }, scale: number) {
+  const safeScale = clampRange(scale || 1, 1, 1.7);
+  return {
+    width: Math.round(size.width * safeScale),
+    height: Math.round(size.height * safeScale),
+  };
 }
 
 function bestVideoMimeType() {
@@ -214,15 +229,32 @@ function seekVideo(video: HTMLVideoElement, time: number) {
   });
 }
 
+function waitForVideoMetadata(video: HTMLVideoElement) {
+  return new Promise<void>(resolve => {
+    if (video.readyState >= 1) {
+      resolve();
+      return;
+    }
+    const done = () => {
+      video.removeEventListener('loadedmetadata', done);
+      resolve();
+    };
+    video.addEventListener('loadedmetadata', done, { once: true });
+    window.setTimeout(done, 1000);
+    video.load();
+  });
+}
+
 function buildAnnotation(tool: VideoTool, start: number[], end: number[], style: DrawingStyle, time: number, zIndex: number): VideoAnnotation | null {
   if (tool === 'select') return null;
   const distance = Math.hypot(end[0] - start[0], end[1] - start[1]);
-  const ellipseTool = tool === 'highlight' || tool === 'spotlight';
+  const playerCircleTool = tool === 'player-circle';
+  const ellipseTool = tool === 'highlight' || tool === 'spotlight' || playerCircleTool;
   const pointTool = tool === 'text' || ellipseTool;
   const defaultEnd = tool === 'text'
     ? [clamp01(start[0] + 0.11), clamp01(start[1] + 0.065)]
     : ellipseTool
-      ? [clamp01(start[0] + 0.045), clamp01(start[1] + 0.15)]
+      ? [clamp01(start[0] + (playerCircleTool ? 0.13 : 0.045)), clamp01(start[1] + (playerCircleTool ? 0.045 : 0.15))]
       : end;
   const safeEnd = pointTool && distance < 0.006 ? defaultEnd : end;
   const x = Math.min(start[0], safeEnd[0]);
@@ -235,17 +267,17 @@ function buildAnnotation(tool: VideoTool, start: number[], end: number[], style:
     : type === 'text'
       ? [start[0], start[1]]
       : [start[0], start[1], safeEnd[0], safeEnd[1]];
-  const defaultDuration = tool === 'highlight' || tool === 'spotlight' ? 4 : tool === 'text' ? 3 : 2.5;
+  const defaultDuration = tool === 'highlight' || tool === 'spotlight' || tool === 'player-circle' ? 4 : tool === 'connection-line' ? 3.5 : tool === 'text' ? 3 : 2.5;
   const annotation: VideoAnnotation = {
     id: id(),
     type,
     points,
-    text: type === 'text' ? 'Press' : ellipseTool ? 'Player' : undefined,
-    color: type === 'spotlight' || type === 'highlight' ? '#facc15' : style.color,
-    fill: type === 'spotlight' ? '#fde68a' : type === 'highlight' ? '#facc15' : style.fill,
-    strokeWidth: type === 'highlight' || type === 'spotlight' ? Math.max(2, Math.min(4.5, style.strokeWidth)) : style.strokeWidth,
-    opacity: type === 'zone' || type === 'circle-zone' || ellipseTool ? style.opacity : 1,
-    outlineOpacity: 1,
+    text: type === 'text' ? 'Press' : type === 'highlight' || type === 'spotlight' ? 'Player' : undefined,
+    color: type === 'player-circle' ? '#ffffff' : type === 'spotlight' || type === 'highlight' ? '#facc15' : style.color,
+    fill: type === 'player-circle' ? '#f8fafc' : type === 'spotlight' ? '#fde68a' : type === 'highlight' ? '#facc15' : style.fill,
+    strokeWidth: type === 'player-circle' ? 2 : ellipseTool ? Math.max(2, Math.min(4.5, style.strokeWidth)) : style.strokeWidth,
+    opacity: type === 'player-circle' ? 0.16 : type === 'zone' || type === 'circle-zone' || ellipseTool ? style.opacity : 1,
+    outlineOpacity: type === 'player-circle' ? 0 : 1,
     startTime: Math.max(0, time),
     endTime: Math.max(time + 0.5, time + defaultDuration),
     bend: type === 'run' ? 0.24 : 0,
@@ -289,12 +321,11 @@ function overlayVisualState(annotation: VideoAnnotation, time: number, forceVisi
     ? 4 * progress * progress * progress
     : 1 - Math.pow(-2 * progress + 2, 3) / 2;
   const overshoot = annotation.motion === 'pop' && entering < 1 && leaving >= 0.98 ? Math.sin(entering * Math.PI) * 0.045 : 0;
-  const justPlaced = time <= annotation.startTime + 0.08;
-  const opacity = forceVisible || justPlaced ? Math.max(0.72, eased) : eased;
+  const visibleProgress = Math.max(0.18, eased);
   return {
-    opacity,
-    scale: annotation.motion === 'pop' ? 0.88 + eased * 0.12 + overshoot : 1,
-    slide: annotation.motion === 'slide' ? (1 - eased) * 0.055 : 0,
+    opacity: forceVisible ? Math.max(0.72, eased) : visibleProgress,
+    scale: annotation.motion === 'pop' ? 0.88 + visibleProgress * 0.12 + overshoot : 1,
+    slide: annotation.motion === 'slide' ? (1 - visibleProgress) * 0.055 : 0,
   };
 }
 
@@ -316,6 +347,25 @@ function pointsAtTime(annotation: VideoAnnotation, time: number) {
     }
   }
   return keyframes[keyframes.length - 1].points;
+}
+
+function annotationCenterAtTime(annotation: VideoAnnotation, time: number): [number, number] {
+  const points = pointsAtTime(annotation, time);
+  const bounds = boundsFromPoints(annotation.type, points);
+  return [(bounds.x1 + bounds.x2) / 2, (bounds.y1 + bounds.y2) / 2];
+}
+
+function linkedConnectionPoints(annotation: VideoAnnotation, time: number, annotations?: VideoAnnotation[]) {
+  if (annotation.type !== 'connection-line' || !annotation.connectionIds?.length || !annotations?.length) return undefined;
+  const points = annotation.connectionIds.flatMap(connectionId => {
+    const linked = annotations.find(item => item.id === connectionId && item.type === 'player-circle');
+    return linked ? annotationCenterAtTime(linked, time) : [];
+  });
+  return points.length >= 4 ? points : undefined;
+}
+
+function resolvedPointsAtTime(annotation: VideoAnnotation, time: number, annotations?: VideoAnnotation[]) {
+  return linkedConnectionPoints(annotation, time, annotations) ?? pointsAtTime(annotation, time);
 }
 
 function translatePoints(type: VideoAnnotation['type'], points: number[], dx: number, dy: number) {
@@ -434,20 +484,71 @@ function makePolygonArea(points: number[], style: DrawingStyle, time: number, zI
   return upsertKeyframe(annotation, time, points);
 }
 
+function makeConnectionLine(points: number[], style: DrawingStyle, time: number, zIndex: number, connectionIds?: string[]): VideoAnnotation {
+  const annotation: VideoAnnotation = {
+    id: id(),
+    type: 'connection-line',
+    points,
+    connectionIds,
+    color: '#e5e7eb',
+    fill: 'transparent',
+    strokeWidth: Math.max(2.5, style.strokeWidth),
+    opacity: 0.92,
+    outlineOpacity: 0.92,
+    startTime: Math.max(0, time),
+    endTime: Math.max(time + 0.5, time + 4),
+    bend: 0,
+    dashed: false,
+    locked: false,
+    hidden: false,
+    zIndex,
+    motion: defaultMotion('connection-line'),
+    pattern: defaultPattern('connection-line'),
+    keyframes: [],
+  };
+  return upsertKeyframe(annotation, time, points);
+}
+
 function duplicateAnnotation(annotation: VideoAnnotation, time: number) {
   const dx = 0.035;
   const dy = 0.035;
+  const timeOffset = 0.15;
   return {
     ...annotation,
     id: id(),
     points: translatePoints(annotation.type, pointsAtTime(annotation, time), dx, dy),
-    keyframes: annotation.keyframes.map(keyframe => ({ ...keyframe, id: id(), points: translatePoints(annotation.type, keyframe.points, dx, dy) })),
+    keyframes: annotation.keyframes.map(keyframe => ({
+      ...keyframe,
+      id: id(),
+      time: keyframe.time + timeOffset,
+      points: translatePoints(annotation.type, keyframe.points, dx, dy),
+    })),
     zIndex: annotation.zIndex + 1,
     locked: false,
     hidden: false,
-    startTime: annotation.startTime + 0.15,
-    endTime: annotation.endTime + 0.15,
+    startTime: annotation.startTime + timeOffset,
+    endTime: annotation.endTime + timeOffset,
   };
+}
+
+function cloneAnnotation(annotation: VideoAnnotation): VideoAnnotation {
+  return {
+    ...annotation,
+    points: annotation.points.slice(),
+    connectionIds: annotation.connectionIds?.slice(),
+    keyframes: annotation.keyframes.map(keyframe => ({ ...keyframe, points: keyframe.points.slice() })),
+  };
+}
+
+function cloneHistorySnapshot(snapshot: HistorySnapshot): HistorySnapshot {
+  return {
+    annotations: snapshot.annotations.map(cloneAnnotation),
+    freezes: snapshot.freezes.map(freeze => ({ ...freeze })),
+  };
+}
+
+function makeHistorySnapshot(annotations: VideoAnnotation[], freezes: FreezeSegment[]): HistorySnapshot {
+  return cloneHistorySnapshot({ annotations, freezes });
 }
 
 function roundedRectPath(ctx: CanvasRenderingContext2D, x: number, y: number, width: number, height: number, radius: number) {
@@ -544,19 +645,14 @@ function curvedLinePoints(x1: number, y1: number, x2: number, y2: number, bend: 
   return [x1, y1, midX - (dy / length) * amount, midY + (dx / length) * amount, x2, y2];
 }
 
-function drawCanvasAnnotation(ctx: CanvasRenderingContext2D, annotation: VideoAnnotation, time: number, width: number, height: number, effectTime = time) {
+function drawCanvasAnnotation(ctx: CanvasRenderingContext2D, annotation: VideoAnnotation, time: number, width: number, height: number, effectTime = time, annotations?: VideoAnnotation[]) {
   if (annotation.hidden || !isAnnotationActive(annotation, time)) return;
-  const points = pointsAtTime(annotation, time);
+  const points = resolvedPointsAtTime(annotation, time, annotations);
+  if (points.length < 2) return;
   const abs = (index: number) => [points[index] * width, points[index + 1] * height] as const;
   const visual = overlayVisualState(annotation, time);
-  const visualBounds = boundsFromPoints(annotation.type, points);
-  const visualCx = ((visualBounds.x1 + visualBounds.x2) / 2) * width;
-  const visualCy = ((visualBounds.y1 + visualBounds.y2) / 2) * height;
   const baseAlpha = visual.opacity;
   ctx.save();
-  ctx.translate(visualCx + visual.slide * width, visualCy);
-  ctx.scale(visual.scale, visual.scale);
-  ctx.translate(-visualCx, -visualCy);
   ctx.globalAlpha = baseAlpha;
   ctx.lineJoin = 'round';
   ctx.lineCap = 'round';
@@ -606,31 +702,35 @@ function drawCanvasAnnotation(ctx: CanvasRenderingContext2D, annotation: VideoAn
     return;
   }
 
-  if (annotation.type === 'circle-zone' || annotation.type === 'highlight' || annotation.type === 'spotlight') {
+  if (annotation.type === 'circle-zone' || annotation.type === 'player-circle' || annotation.type === 'highlight' || annotation.type === 'spotlight') {
     const [x1, y1] = abs(0);
     const [x2, y2] = abs(2);
     const cx = (x1 + x2) / 2;
     const cy = (y1 + y2) / 2;
     const tallTool = annotation.type === 'highlight' || annotation.type === 'spotlight';
-    const rx = Math.max(tallTool ? 11 : 18, Math.abs(x2 - x1) / 2);
-    const ry = Math.max(tallTool ? 28 : 18, Math.abs(y2 - y1) / 2);
+    const playerDisc = annotation.type === 'player-circle';
+    const rx = Math.max(playerDisc ? 32 : tallTool ? 11 : 18, Math.abs(x2 - x1) / 2);
+    const ry = Math.max(playerDisc ? 13 : tallTool ? 28 : 18, Math.abs(y2 - y1) / 2);
     if (annotation.type === 'spotlight') {
-      ctx.globalAlpha = baseAlpha * 0.48;
+      ctx.globalAlpha = baseAlpha * 0.52;
       ctx.fillStyle = '#020617';
       ctx.fillRect(0, 0, width, height);
       ctx.globalCompositeOperation = 'destination-out';
-      const cut = ctx.createRadialGradient(cx, cy, 0, cx, cy, Math.max(rx, ry) * 1.22);
-      cut.addColorStop(0, 'rgba(0,0,0,0.98)');
-      cut.addColorStop(0.58, 'rgba(0,0,0,0.74)');
-      cut.addColorStop(1, 'rgba(0,0,0,0)');
-      ctx.fillStyle = cut;
+      ctx.globalAlpha = baseAlpha * 0.94;
+      ctx.fillStyle = '#000000';
       ctx.beginPath();
-      ctx.ellipse(cx, cy, rx * 1.22, ry * 1.22, 0, 0, Math.PI * 2);
+      ctx.ellipse(cx, cy, rx * 1.22, ry * 1.18, 0, 0, Math.PI * 2);
       ctx.fill();
       ctx.globalCompositeOperation = 'source-over';
+      ctx.globalAlpha = baseAlpha * 0.06;
+      ctx.strokeStyle = '#ffffff';
+      ctx.lineWidth = 5;
+      ctx.beginPath();
+      ctx.ellipse(cx, cy, rx * 1.28, ry * 1.24, 0, 0, Math.PI * 2);
+      ctx.stroke();
     }
     if (annotation.type !== 'spotlight') {
-      ctx.globalAlpha = baseAlpha * Math.max(0.06, annotation.opacity * (annotation.type === 'highlight' ? 0.36 : 0.58));
+      ctx.globalAlpha = baseAlpha * Math.max(0.06, annotation.opacity * (annotation.type === 'player-circle' ? 1 : annotation.type === 'highlight' ? 0.36 : 0.58));
       ctx.fillStyle = annotation.fill;
       ctx.beginPath();
       ctx.ellipse(cx, cy, rx, ry, 0, 0, Math.PI * 2);
@@ -642,11 +742,14 @@ function drawCanvasAnnotation(ctx: CanvasRenderingContext2D, annotation: VideoAn
         ctx.ellipse(cx, cy, rx, ry, 0, 0, Math.PI * 2);
       });
     }
-    ctx.globalAlpha = baseAlpha * Math.max(0, annotation.outlineOpacity);
-    ctx.strokeStyle = annotation.color;
-    ctx.beginPath();
-    ctx.ellipse(cx, cy, rx, ry, 0, 0, Math.PI * 2);
-    ctx.stroke();
+    ctx.lineWidth = annotation.strokeWidth;
+    if (annotation.outlineOpacity > 0.01) {
+      ctx.globalAlpha = baseAlpha * Math.max(0, annotation.outlineOpacity);
+      ctx.strokeStyle = annotation.color;
+      ctx.beginPath();
+      ctx.ellipse(cx, cy, rx, ry, 0, 0, Math.PI * 2);
+      ctx.stroke();
+    }
     if (annotation.type === 'highlight' || annotation.type === 'spotlight') {
       const text = annotation.text?.trim();
       if (text) {
@@ -665,6 +768,24 @@ function drawCanvasAnnotation(ctx: CanvasRenderingContext2D, annotation: VideoAn
         ctx.fillText(text, labelX + 8, labelY + 17);
       }
     }
+    ctx.restore();
+    return;
+  }
+
+  if (annotation.type === 'connection-line') {
+    const absPoints = points.map((point, index) => index % 2 === 0 ? point * width : point * height);
+    if (absPoints.length < 4) {
+      ctx.restore();
+      return;
+    }
+    ctx.shadowBlur = 8;
+    ctx.strokeStyle = annotation.color;
+    ctx.lineWidth = annotation.strokeWidth;
+    ctx.beginPath();
+    ctx.moveTo(absPoints[0], absPoints[1]);
+    for (let index = 2; index < absPoints.length; index += 2) ctx.lineTo(absPoints[index], absPoints[index + 1]);
+    ctx.stroke();
+    ctx.shadowBlur = 0;
     ctx.restore();
     return;
   }
@@ -804,6 +925,11 @@ function nearestTimelineSnap(time: number, segments: TimelineSegment[], threshol
   return snap ?? time;
 }
 
+function closestTimelineSnap(time: number, segments: TimelineSegment[]) {
+  const points = timelineSnapPoints(segments);
+  return points.reduce((closest, point) => Math.abs(point - time) < Math.abs(closest - time) ? point : closest, points[0] ?? 0);
+}
+
 function snapTimelineTime(time: number, segments: TimelineSegment[], threshold = 0.12) {
   const total = Math.max(0, timelineDuration(segments));
   const safe = clampRange(time, 0, total);
@@ -829,6 +955,8 @@ function timelineToSource(segments: TimelineSegment[], timelineTime: number) {
 
 function sourceToTimeline(segments: TimelineSegment[], sourceTime: number) {
   if (!segments.length) return 0;
+  const freezeMatch = segments.find(segment => segment.kind === 'freeze' && Math.abs(sourceTime - segment.sourceStart) <= 0.02);
+  if (freezeMatch) return freezeMatch.timelineStart;
   let fallback = 0;
   for (const segment of segments) {
     if (segment.kind === 'video' && sourceTime >= segment.sourceStart && sourceTime <= segment.sourceEnd) {
@@ -850,28 +978,49 @@ function bendFromControl(x1: number, y1: number, x2: number, y2: number, control
   return clampRange(((controlX - midX) * normalX + (controlY - midY) * normalY) / length, -0.65, 0.65);
 }
 
-function VideoAnnotationShape({ annotation, time, effectTime, mapper, selected, onSelect, onMoveAtTime, onTranslateAtTime, onEditText, onSetBend }: {
+function VideoAnnotationShape({ annotation, time, effectTime, mapper, selected, linkedAnnotations, connectMode = false, connectArmed = false, onSelect, onMoveAtTime, onTranslateAtTime, onEditText, onSetBend, onConnectPick, onConnectCancel, onBeginEdit }: {
   annotation: VideoAnnotation;
   time: number;
   effectTime?: number;
   mapper: Mapper;
   selected: boolean;
+  linkedAnnotations?: VideoAnnotation[];
+  connectMode?: boolean;
+  connectArmed?: boolean;
   onSelect: (id: string, additive: boolean) => void;
   onMoveAtTime: (id: string, points: number[]) => void;
   onTranslateAtTime: (id: string, dx: number, dy: number) => void;
   onEditText: (id: string) => void;
   onSetBend: (id: string, bend: number) => void;
+  onConnectPick?: (id: string) => void;
+  onConnectCancel?: () => void;
+  onBeginEdit?: () => void;
 }) {
-  const dragStart = useRef<{ x: number; y: number } | null>(null);
+  const dragStart = useRef<{ x: number; y: number; points: number[]; lastPoints: number[] } | null>(null);
   if (annotation.hidden || (!selected && !isAnnotationActive(annotation, time))) return null;
-  const points = pointsAtTime(annotation, time);
+  const points = resolvedPointsAtTime(annotation, time, linkedAnnotations);
+  if (points.length < 2) return null;
   const effectClock = effectTime ?? time;
   const visual = overlayVisualState(annotation, time, selected);
+  const linkedConnection = annotation.type === 'connection-line' && Boolean(annotation.connectionIds?.length);
+  const rightClickConnectableDisc = connectMode && annotation.type === 'player-circle';
+  const pickConnection = (event: Konva.KonvaEventObject<MouseEvent | PointerEvent>) => {
+    if (!rightClickConnectableDisc) return false;
+    event.evt.preventDefault();
+    event.cancelBubble = true;
+    onConnectPick?.(annotation.id);
+    return true;
+  };
   const interactionProps = {
-    draggable: !annotation.locked,
+    draggable: !annotation.locked && !linkedConnection,
     dragDistance: 3,
     onMouseDown: (event: Konva.KonvaEventObject<MouseEvent>) => {
       event.cancelBubble = true;
+      if (event.evt.button === 2) {
+        event.evt.preventDefault();
+        return;
+      }
+      if (connectMode && connectArmed) onConnectCancel?.();
       const additive = event.evt.ctrlKey || event.evt.metaKey;
       if (additive || !selected) onSelect(annotation.id, additive);
     },
@@ -881,35 +1030,54 @@ function VideoAnnotationShape({ annotation, time, effectTime, mapper, selected, 
     },
     onClick: (event: Konva.KonvaEventObject<MouseEvent>) => {
       event.cancelBubble = true;
+      if (event.evt.button === 2) return;
       onSelect(annotation.id, event.evt.ctrlKey || event.evt.metaKey);
     },
     onTap: (event: Konva.KonvaEventObject<TouchEvent>) => {
       event.cancelBubble = true;
       onSelect(annotation.id, false);
     },
+    onContextMenu: (event: Konva.KonvaEventObject<PointerEvent>) => {
+      if (!pickConnection(event)) {
+        event.evt.preventDefault();
+        if (connectMode && connectArmed) onConnectCancel?.();
+      }
+    },
     onDragStart: (event: Konva.KonvaEventObject<DragEvent>) => {
       event.cancelBubble = true;
       if (!selected) onSelect(annotation.id, false);
+      onBeginEdit?.();
       const node = event.currentTarget as Konva.Group;
-      dragStart.current = { x: node.x(), y: node.y() };
+      dragStart.current = { x: node.x(), y: node.y(), points: points.slice(), lastPoints: points.slice() };
       const stage = event.target.getStage();
       if (stage) stage.container().style.cursor = 'grabbing';
+    },
+    onDragMove: (event: Konva.KonvaEventObject<DragEvent>) => {
+      const start = dragStart.current;
+      if (!start) return;
+      event.cancelBubble = true;
+      const node = event.currentTarget as Konva.Group;
+      const dx = (node.x() - start.x) / mapper.width;
+      const dy = (node.y() - start.y) / mapper.height;
+      const nextPoints = translatePoints(annotation.type, start.points, dx, dy);
+      start.lastPoints = nextPoints;
+      node.position({ x: start.x, y: start.y });
+      onMoveAtTime(annotation.id, nextPoints);
     },
     onDragEnd: (event: Konva.KonvaEventObject<DragEvent>) => {
       const start = dragStart.current;
       if (!start) return;
+      event.cancelBubble = true;
       const node = event.currentTarget as Konva.Group;
-      const dx = (node.x() - start.x) / mapper.width;
-      const dy = (node.y() - start.y) / mapper.height;
       node.position({ x: start.x, y: start.y });
       dragStart.current = null;
-      onTranslateAtTime(annotation.id, dx, dy);
+      onMoveAtTime(annotation.id, start.lastPoints);
       const stage = event.target.getStage();
       if (stage) stage.container().style.cursor = annotation.locked ? 'default' : 'grab';
     },
     onMouseMove: (event: Konva.KonvaEventObject<MouseEvent>) => {
       const stage = event.target.getStage();
-      if (stage && !annotation.locked) stage.container().style.cursor = 'grab';
+      if (stage && !annotation.locked) stage.container().style.cursor = linkedConnection ? 'pointer' : 'grab';
     },
     opacity: visual.opacity,
   };
@@ -984,6 +1152,10 @@ function VideoAnnotationShape({ annotation, time, effectTime, mapper, selected, 
       dragDistance={1}
       onMouseDown={event => { event.cancelBubble = true; onSelect(annotation.id, false); }}
       onTouchStart={event => { event.cancelBubble = true; onSelect(annotation.id, false); }}
+      onDragStart={event => {
+        event.cancelBubble = true;
+        onBeginEdit?.();
+      }}
       onDragMove={event => {
         event.cancelBubble = true;
         const node = event.currentTarget as Konva.Group;
@@ -997,44 +1169,47 @@ function VideoAnnotationShape({ annotation, time, effectTime, mapper, selected, 
         onMoveAtTime(annotation.id, movePoint(points, pointIndex, rel.x, rel.y));
       }}
     >
-      <Circle radius={17} fill="#ffffff" opacity={0.001} />
+      <Circle radius={17} fill={HIT_FILL} />
       <Circle radius={8} fill="#ffffff" stroke={accent} strokeWidth={2.25} shadowColor="#020617" shadowBlur={7} shadowOpacity={0.22} />
       <Circle radius={2.3} fill={accent} />
     </Group>;
   };
   const renderResizeHandle = () => {
-    if (!selected || annotation.locked || annotation.type === 'text' || annotation.type === 'polygon-zone') return null;
+    if (!selected || annotation.locked || annotation.type === 'text' || annotation.type === 'polygon-zone' || annotation.type === 'connection-line') return null;
     const bounds = boundsFromPoints(annotation.type, points);
     const center = { x: (bounds.x1 + bounds.x2) / 2, y: (bounds.y1 + bounds.y2) / 2 };
     const [handleX, handleY] = mapper.toAbs(bounds.x2, bounds.y2);
-    return <Rect
-      x={handleX - 6}
-      y={handleY - 6}
-      width={12}
-      height={12}
-      cornerRadius={3}
-      fill="#ffffff"
-      stroke="#2563eb"
-      strokeWidth={2}
+    return <Group
+      x={handleX}
+      y={handleY}
       draggable
       dragDistance={1}
-      onMouseDown={event => { event.cancelBubble = true; }}
-      onTouchStart={event => { event.cancelBubble = true; }}
+      onMouseDown={event => { event.cancelBubble = true; onSelect(annotation.id, false); }}
+      onTouchStart={event => { event.cancelBubble = true; onSelect(annotation.id, false); }}
+      onDragStart={event => {
+        event.cancelBubble = true;
+        onBeginEdit?.();
+      }}
       onDragMove={event => {
         event.cancelBubble = true;
-        const rel = mapper.toRel(event.target.x() + 6, event.target.y() + 6);
+        const node = event.currentTarget as Konva.Group;
+        const rel = mapper.toRel(node.x(), node.y());
         const width = Math.max(0.01, Math.abs(rel.x - center.x) * 2);
         const height = Math.max(0.01, Math.abs(rel.y - center.y) * 2);
         onMoveAtTime(annotation.id, resizePoints(annotation.type, points, width, height));
       }}
       onDragEnd={event => {
         event.cancelBubble = true;
-        const rel = mapper.toRel(event.target.x() + 6, event.target.y() + 6);
+        const node = event.currentTarget as Konva.Group;
+        const rel = mapper.toRel(node.x(), node.y());
         const width = Math.max(0.01, Math.abs(rel.x - center.x) * 2);
         const height = Math.max(0.01, Math.abs(rel.y - center.y) * 2);
         onMoveAtTime(annotation.id, resizePoints(annotation.type, points, width, height));
       }}
-    />;
+    >
+      <Rect x={-18} y={-18} width={36} height={36} fill={HIT_FILL} cornerRadius={8} />
+      <Rect x={-6} y={-6} width={12} height={12} cornerRadius={3} fill="#ffffff" stroke="#2563eb" strokeWidth={2} />
+    </Group>;
   };
 
   if (annotation.type === 'zone') {
@@ -1048,13 +1223,8 @@ function VideoAnnotationShape({ annotation, time, effectTime, mapper, selected, 
         {renderRectFx(rx, ry, width, height)}
         <Rect x={rx} y={ry} width={width} height={height} stroke={annotation.color} strokeWidth={annotation.strokeWidth} opacity={annotation.outlineOpacity} dash={borderDash} dashOffset={borderDashOffset} cornerRadius={10} />
         {selected && <Rect x={rx - 4} y={ry - 4} width={width + 8} height={height + 8} stroke={selectionColor} strokeWidth={2} dash={[7, 6]} cornerRadius={12} />}
-        <Rect x={rx - 20} y={ry - 20} width={width + 40} height={height + 40} fill="#ffffff" opacity={0.001} cornerRadius={18} />
+        <Rect x={rx - 20} y={ry - 20} width={width + 40} height={height + 40} fill={HIT_FILL} cornerRadius={18} />
       </Group>
-      {selected && points.map((point, index, all) => {
-        if (index % 2 !== 0) return null;
-        const [px, py] = mapper.toAbs(point, all[index + 1]);
-        return <Group key={`polygon-handle-${index}`} listening>{renderPointHandle(index / 2, px, py, '#22d3ee')}</Group>;
-      })}
       {renderResizeHandle()}
     </>;
   }
@@ -1069,13 +1239,13 @@ function VideoAnnotationShape({ annotation, time, effectTime, mapper, selected, 
     const height = Math.max(1, Math.max(...ys) - minY);
     return <>
       <Group {...interactionProps}>
-        <Rect x={minX - 22} y={minY - 22} width={width + 44} height={height + 44} fill="#ffffff" opacity={0.001} cornerRadius={12} />
+        <Rect x={minX - 22} y={minY - 22} width={width + 44} height={height + 44} fill={HIT_FILL} cornerRadius={12} />
         <Line points={absPoints} closed stroke={annotation.color} strokeWidth={annotation.strokeWidth + 9} opacity={0.12} lineJoin="round" shadowColor={annotation.color} shadowBlur={18} shadowOpacity={0.22} listening={false} />
         <Line points={absPoints} closed fill={annotation.fill} opacity={Math.max(0.08, annotation.opacity)} lineJoin="round" shadowColor={annotation.fill} shadowBlur={8} shadowOpacity={0.14} />
         {renderPolygonFx(absPoints)}
         <Line points={absPoints} closed stroke={annotation.color} strokeWidth={annotation.strokeWidth} opacity={annotation.outlineOpacity} dash={borderDash} dashOffset={borderDashOffset} lineJoin="round" />
         {selected && <Line points={absPoints} closed stroke={selectionColor} strokeWidth={annotation.strokeWidth + 3} opacity={0.42} dash={[7, 6]} lineJoin="round" />}
-        <Line points={absPoints} closed fill="#ffffff" opacity={0.001} stroke="#ffffff" strokeWidth={28} hitStrokeWidth={28} lineJoin="round" />
+        <Line points={absPoints} closed fill={HIT_FILL} stroke={HIT_FILL} strokeWidth={28} hitStrokeWidth={28} lineJoin="round" />
       </Group>
       {selected && points.map((point, index, all) => {
         if (index % 2 !== 0) return null;
@@ -1085,36 +1255,61 @@ function VideoAnnotationShape({ annotation, time, effectTime, mapper, selected, 
     </>;
   }
 
-  if (annotation.type === 'circle-zone' || annotation.type === 'highlight' || annotation.type === 'spotlight') {
+  if (annotation.type === 'connection-line') {
+    const absPoints = points.flatMap((point, index, all) => index % 2 === 0 ? mapper.toAbs(point, all[index + 1]) : []);
+    if (absPoints.length < 4) return null;
+    const xs = absPoints.filter((_, index) => index % 2 === 0);
+    const ys = absPoints.filter((_, index) => index % 2 === 1);
+    const minX = Math.min(...xs);
+    const minY = Math.min(...ys);
+    const width = Math.max(1, Math.max(...xs) - minX);
+    const height = Math.max(1, Math.max(...ys) - minY);
+    return <>
+      <Group {...interactionProps}>
+        <Rect x={minX - 24} y={minY - 24} width={width + 48} height={height + 48} fill={HIT_FILL} cornerRadius={14} />
+        <Line points={absPoints} stroke="#ffffff" strokeWidth={annotation.strokeWidth + 28} opacity={0.01} lineCap="round" lineJoin="round" />
+        {selected && <Line points={absPoints} stroke={selectionColor} strokeWidth={annotation.strokeWidth + 5} opacity={0.3} lineCap="round" lineJoin="round" />}
+        <Line points={absPoints} stroke={annotation.color} strokeWidth={annotation.strokeWidth} opacity={annotation.outlineOpacity} lineCap="round" lineJoin="round" shadowColor={annotation.color} shadowBlur={7} />
+      </Group>
+      {selected && !linkedConnection && points.map((point, index, all) => {
+        if (index % 2 !== 0) return null;
+        const [px, py] = mapper.toAbs(point, all[index + 1]);
+        return <Group key={`connection-handle-${index}`} listening>{renderPointHandle(index / 2, px, py, '#38bdf8')}</Group>;
+      })}
+    </>;
+  }
+
+  if (annotation.type === 'circle-zone' || annotation.type === 'player-circle' || annotation.type === 'highlight' || annotation.type === 'spotlight') {
     const [x2, y2] = abs(2);
     const cx = (x1 + x2) / 2;
     const cy = (y1 + y2) / 2;
     const tallTool = annotation.type === 'highlight' || annotation.type === 'spotlight';
-    const rx = Math.max(tallTool ? 9 : 16, Math.abs(x2 - x1) / 2);
-    const ry = Math.max(tallTool ? 32 : 16, Math.abs(y2 - y1) / 2);
+    const playerDisc = annotation.type === 'player-circle';
+    const rx = Math.max(playerDisc ? 32 : tallTool ? 9 : 16, Math.abs(x2 - x1) / 2);
+    const ry = Math.max(playerDisc ? 13 : tallTool ? 32 : 16, Math.abs(y2 - y1) / 2);
     const label = annotation.text?.trim();
     const labelWidth = label ? Math.max(48, label.length * 7.4 + 14) : 0;
     return <>
-      <Group {...interactionProps} onDblClick={() => onEditText(annotation.id)} onDblTap={() => onEditText(annotation.id)}>
-        {annotation.type === 'spotlight' && <>
-          <Rect x={0} y={0} width={mapper.width} height={mapper.height} fill="#020617" opacity={0.52} listening={false} />
-          <Ellipse x={cx} y={cy} radiusX={rx * 1.22} radiusY={ry * 1.18} fill="#000000" opacity={0.94} globalCompositeOperation="destination-out" listening={false} />
-          <Ellipse x={cx} y={cy} radiusX={rx * 1.28} radiusY={ry * 1.24} stroke="#ffffff" strokeWidth={5} opacity={0.06} listening={false} />
-        </>}
-        {annotation.type !== 'spotlight' && <Ellipse x={cx} y={cy} radiusX={rx} radiusY={ry} fill={annotation.fill} opacity={Math.max(0.04, annotation.opacity * (annotation.type === 'highlight' ? 0.34 : 0.5))} shadowColor={annotation.fill} shadowBlur={9} shadowOpacity={0.16} />}
-        {renderEllipseFx(cx, cy, rx, ry)}
-        <Ellipse x={cx} y={cy} radiusX={rx} radiusY={ry} stroke={annotation.color} strokeWidth={annotation.strokeWidth} opacity={annotation.outlineOpacity} dash={borderDash} dashOffset={borderDashOffset} />
+      {annotation.type === 'spotlight' && <Group listening={false} opacity={visual.opacity}>
+        <Rect x={0} y={0} width={mapper.width} height={mapper.height} fill="#020617" opacity={0.52} />
+        <Ellipse x={cx} y={cy} radiusX={rx * 1.22} radiusY={ry * 1.18} fill="#000000" opacity={0.94} globalCompositeOperation="destination-out" />
+        <Ellipse x={cx} y={cy} radiusX={rx * 1.28} radiusY={ry * 1.24} stroke="#ffffff" strokeWidth={5} opacity={0.06} />
+      </Group>}
+      <Group x={cx} y={cy} {...interactionProps} onDblClick={() => onEditText(annotation.id)} onDblTap={() => onEditText(annotation.id)}>
+        {annotation.type !== 'spotlight' && <Ellipse x={0} y={0} radiusX={rx} radiusY={ry} fill={annotation.fill} opacity={Math.max(0.04, annotation.opacity * (annotation.type === 'player-circle' ? 1 : annotation.type === 'highlight' ? 0.34 : 0.5))} shadowColor={annotation.fill} shadowBlur={9} shadowOpacity={0.16} />}
+        {renderEllipseFx(0, 0, rx, ry)}
+        {annotation.outlineOpacity > 0.01 && <Ellipse x={0} y={0} radiusX={rx} radiusY={ry} stroke={annotation.color} strokeWidth={annotation.strokeWidth} opacity={annotation.outlineOpacity} dash={borderDash} dashOffset={borderDashOffset} />}
         {label && (annotation.type === 'highlight' || annotation.type === 'spotlight') && <Group
-          x={cx}
-          y={cy + ry + 6}
+          x={0}
+          y={ry + 6}
           onClick={event => { event.cancelBubble = true; onEditText(annotation.id); }}
           onTap={event => { event.cancelBubble = true; onEditText(annotation.id); }}
         >
           <Rect x={-labelWidth / 2} y={0} width={labelWidth} height={19} fill="#020617" opacity={0.9} stroke={annotation.color} strokeWidth={0.8} cornerRadius={6} shadowColor="#020617" shadowBlur={6} shadowOpacity={0.22} />
           <Text x={-labelWidth / 2} y={0} width={labelWidth} height={19} text={label} align="center" verticalAlign="middle" fill="#f8fafc" fontFamily="Inter, Arial, sans-serif" fontSize={10} fontStyle="bold" />
         </Group>}
-        {selected && <Ellipse x={cx} y={cy} radiusX={rx + 5} radiusY={ry + 5} stroke={selectionColor} strokeWidth={1.5} dash={[7, 6]} />}
-        <Ellipse x={cx} y={cy} radiusX={rx + 20} radiusY={ry + 20} fill="#ffffff" opacity={0.001} />
+        {selected && <Ellipse x={0} y={0} radiusX={rx + 5} radiusY={ry + 5} stroke={selectionColor} strokeWidth={1.5} dash={[7, 6]} />}
+        <Ellipse x={0} y={0} radiusX={rx + (playerDisc ? 8 : 30)} radiusY={ry + (playerDisc ? 7 : 30)} fill={HIT_FILL} stroke={HIT_FILL} strokeWidth={playerDisc ? 4 : 22} />
       </Group>
       {renderResizeHandle()}
     </>;
@@ -1159,6 +1354,10 @@ function VideoAnnotationShape({ annotation, time, effectTime, mapper, selected, 
       dragDistance={1}
       onMouseDown={event => { event.cancelBubble = true; onSelect(annotation.id, false); }}
       onTouchStart={event => { event.cancelBubble = true; onSelect(annotation.id, false); }}
+      onDragStart={event => {
+        event.cancelBubble = true;
+        onBeginEdit?.();
+      }}
       onDragMove={event => {
         event.cancelBubble = true;
         const node = event.currentTarget as Konva.Group;
@@ -1170,7 +1369,7 @@ function VideoAnnotationShape({ annotation, time, effectTime, mapper, selected, 
         onSetBend(annotation.id, bendFromControl(x1, y1, x2, y2, node.x(), node.y()));
       }}
     >
-      <Circle radius={19} fill="#ffffff" opacity={0.001} />
+      <Circle radius={19} fill={HIT_FILL} />
       <Circle radius={12} fill="#22d3ee" opacity={0.2} stroke="#67e8f9" strokeWidth={1} />
       <Circle radius={7.5} fill="#ffffff" stroke="#0891b2" strokeWidth={2.2} shadowColor="#020617" shadowBlur={7} shadowOpacity={0.25} />
       <Circle radius={2.3} fill="#0891b2" />
@@ -1209,24 +1408,56 @@ function UploadPanel({ onFiles }: { onFiles: (files: FileList | File[]) => void 
   </main>;
 }
 
-function MediaStrip({ segments, playheadTime, onSeek, onFreezeDurationChange }: {
+function MediaStrip({ segments, playheadTime, onSeek, onFreezeDurationChange, trimStart, trimEnd, sourceDuration, onTrimChange, onBeginEdit }: {
   segments: TimelineSegment[];
   playheadTime: number;
   onSeek: (timelineTime: number) => void;
   onFreezeDurationChange: (freezeId: string, duration: number) => void;
+  trimStart: number;
+  trimEnd: number;
+  sourceDuration: number;
+  onTrimChange: (trimStart: number, trimEnd: number) => void;
+  onBeginEdit?: () => void;
 }) {
   const total = Math.max(0.2, timelineDuration(segments));
+  const sourceTotal = Math.max(0.2, sourceDuration || trimEnd || total);
+  const sourceStart = clampRange(trimStart, 0, Math.max(0, sourceTotal - 0.2));
+  const sourceEnd = clampRange(trimEnd || sourceTotal, sourceStart + 0.2, sourceTotal);
+  const trimLeftPct = (sourceStart / sourceTotal) * 100;
+  const rawTrimWidthPct = ((sourceEnd - sourceStart) / sourceTotal) * 100;
+  const trimWidthPct = Math.min(100 - trimLeftPct, Math.max(2, rawTrimWidthPct));
+  const playheadPct = clampRange(trimLeftPct + (clampRange(playheadTime, 0, total) / total) * trimWidthPct, 0, 100);
   const railRef = useRef<HTMLDivElement | null>(null);
-  const pointerTime = (clientX: number, snap = true) => {
+  const pointerTimelineTime = (clientX: number, snap = true) => {
     const rect = railRef.current?.getBoundingClientRect();
     if (!rect) return 0;
-    const raw = clampRange(((clientX - rect.left) / Math.max(1, rect.width)) * total, 0, total);
+    const trimLeft = rect.left + rect.width * (trimLeftPct / 100);
+    const trimWidth = Math.max(1, rect.width * (trimWidthPct / 100));
+    const raw = clampRange(((clientX - trimLeft) / trimWidth) * total, 0, total);
     return snap ? snapTimelineTime(raw, segments) : raw;
+  };
+  const pointerSourceTimelineTime = (clientX: number) => {
+    const rect = railRef.current?.getBoundingClientRect();
+    if (!rect) return 0;
+    const sourceTime = clampRange(((clientX - rect.left) / Math.max(1, rect.width)) * sourceTotal, sourceStart, sourceEnd);
+    return sourceToTimeline(segments, sourceTime);
   };
   const beginScrub = (event: React.PointerEvent<HTMLElement>) => {
     event.preventDefault();
     event.stopPropagation();
-    const seek = (clientX: number) => onSeek(pointerTime(clientX));
+    const seek = (clientX: number) => onSeek(pointerTimelineTime(clientX));
+    seek(event.clientX);
+    const onMove = (moveEvent: PointerEvent) => seek(moveEvent.clientX);
+    const onUp = () => {
+      window.removeEventListener('pointermove', onMove);
+      window.removeEventListener('pointerup', onUp);
+    };
+    window.addEventListener('pointermove', onMove);
+    window.addEventListener('pointerup', onUp, { once: true });
+  };
+  const beginSourceScrub = (event: React.PointerEvent<HTMLElement>) => {
+    event.preventDefault();
+    const seek = (clientX: number) => onSeek(pointerSourceTimelineTime(clientX));
     seek(event.clientX);
     const onMove = (moveEvent: PointerEvent) => seek(moveEvent.clientX);
     const onUp = () => {
@@ -1242,9 +1473,10 @@ function MediaStrip({ segments, playheadTime, onSeek, onFreezeDurationChange }: 
     event.stopPropagation();
     const rect = railRef.current?.getBoundingClientRect();
     if (!rect) return;
+    onBeginEdit?.();
     const startClientX = event.clientX;
     const originalEnd = segment.timelineStart + segment.duration;
-    const secondsPerPixel = total / Math.max(1, rect.width);
+    const secondsPerPixel = total / Math.max(1, rect.width * (trimWidthPct / 100));
     const resize = (clientX: number) => {
       const rawEnd = originalEnd + (clientX - startClientX) * secondsPerPixel;
       const snappedEnd = nearestTimelineSnap(rawEnd, segments, 0.16);
@@ -1259,44 +1491,96 @@ function MediaStrip({ segments, playheadTime, onSeek, onFreezeDurationChange }: 
     window.addEventListener('pointermove', onMove);
     window.addEventListener('pointerup', onUp, { once: true });
   };
+  const beginTrimDrag = (event: React.PointerEvent, edge: 'start' | 'end') => {
+    if (!sourceDuration) return;
+    event.preventDefault();
+    event.stopPropagation();
+    const rect = railRef.current?.getBoundingClientRect();
+    if (!rect) return;
+    const startClientX = event.clientX;
+    const originalStart = trimStart;
+    const originalEnd = trimEnd || sourceDuration;
+    const secondsPerPixel = sourceTotal / Math.max(1, rect.width);
+    const resize = (clientX: number) => {
+      const delta = (clientX - startClientX) * secondsPerPixel;
+      if (edge === 'start') {
+        onTrimChange(clampRange(originalStart + delta, 0, Math.max(0, originalEnd - 0.2)), originalEnd);
+      } else {
+        onTrimChange(originalStart, clampRange(originalEnd + delta, originalStart + 0.2, sourceDuration));
+      }
+    };
+    resize(event.clientX);
+    const onMove = (moveEvent: PointerEvent) => resize(moveEvent.clientX);
+    const onUp = () => {
+      window.removeEventListener('pointermove', onMove);
+      window.removeEventListener('pointerup', onUp);
+    };
+    window.addEventListener('pointermove', onMove);
+    window.addEventListener('pointerup', onUp, { once: true });
+  };
 
   return <div className="border-t border-[#d7e5f6] bg-white/82 px-2 py-2 backdrop-blur">
     <div className="mx-auto max-w-6xl">
-      <div ref={railRef} onPointerDown={beginScrub} className="relative h-16 overflow-hidden rounded-xl border border-[#d7e5f6] bg-[#f8fbff] p-1.5">
-        {timelineSnapPoints(segments).map(point => <span key={point} className="pointer-events-none absolute bottom-1.5 top-1.5 z-0 w-px bg-[#bfdbfe]/80" style={{ left: `${(point / total) * 100}%` }} />)}
-        {segments.map(segment => {
-          const left = `${(segment.timelineStart / total) * 100}%`;
-          const width = `${Math.max(3, (segment.duration / total) * 100)}%`;
-          const active = playheadTime >= segment.timelineStart && playheadTime < segment.timelineStart + segment.duration;
-          return <button
-            key={segment.id}
-            type="button"
-            onPointerDown={beginScrub}
-            style={{ left, width }}
-            className={`absolute top-1.5 z-10 h-[3.25rem] min-w-10 overflow-hidden rounded-lg border px-2 text-left transition ${segment.kind === 'freeze' ? 'border-amber-300 bg-gradient-to-br from-amber-100 to-orange-100 text-amber-950' : 'border-[#bfdbfe] bg-white text-[#0b172a]'} ${active ? 'ring-2 ring-[#2563eb]' : ''}`}
-          >
-            <span className="block truncate text-[10px] font-black uppercase tracking-[0.08em]">{segment.kind === 'freeze' ? 'Freeze' : 'Video'}</span>
-            <span className="block text-[10px] font-semibold tabular-nums">{segment.kind === 'freeze' ? `${segment.duration.toFixed(1)}s image` : `${segment.duration.toFixed(1)}s clip`}</span>
-            {segment.kind === 'freeze' && <span
-              title="Drag to change freeze duration"
-              onPointerDown={event => beginFreezeResize(event, segment)}
-              className="absolute bottom-1 right-1 z-20 grid h-7 w-7 cursor-ew-resize place-items-center rounded-md bg-amber-300 text-amber-950 shadow-[0_6px_14px_rgba(146,64,14,.25)] ring-1 ring-amber-500/50"
-            ><Snowflake size={13} /></span>}
-          </button>;
-        })}
-        <span className="pointer-events-none absolute bottom-1.5 top-1.5 z-30 w-0.5 rounded-full bg-[#2563eb] shadow-[0_0_0_2px_rgba(37,99,235,.18)]" style={{ left: `calc(${(clampRange(playheadTime, 0, total) / total) * 100}% - 1px)` }} />
+      <div ref={railRef} onPointerDown={beginSourceScrub} className="relative h-20 overflow-hidden rounded-xl border border-[#d7e5f6] bg-[#edf4fc] p-1.5">
+        <div className="absolute inset-x-1.5 bottom-2 top-4 rounded-xl bg-[#dbeafe]" />
+        {trimLeftPct > 0 && <span className="pointer-events-none absolute bottom-2 top-4 z-0 rounded-l-xl bg-slate-900/12" style={{ left: '0.375rem', width: `${trimLeftPct}%` }} />}
+        {trimLeftPct + trimWidthPct < 100 && <span className="pointer-events-none absolute bottom-2 top-4 z-0 rounded-r-xl bg-slate-900/12" style={{ left: `${trimLeftPct + trimWidthPct}%`, right: '0.375rem' }} />}
+        <div
+          onPointerDown={beginScrub}
+          className="absolute bottom-2 top-4 z-10 overflow-hidden rounded-xl border border-[#2563eb] bg-white shadow-[0_8px_22px_rgba(37,99,235,.16)]"
+          style={{ left: `${trimLeftPct}%`, width: `${trimWidthPct}%` }}
+        >
+          {timelineSnapPoints(segments).map(point => <span key={point} className="pointer-events-none absolute bottom-1 top-1 z-0 w-px bg-[#bfdbfe]/80" style={{ left: `${(point / total) * 100}%` }} />)}
+          {segments.map(segment => {
+            const left = `${(segment.timelineStart / total) * 100}%`;
+            const width = `${Math.max(3, (segment.duration / total) * 100)}%`;
+            const active = playheadTime >= segment.timelineStart && playheadTime < segment.timelineStart + segment.duration;
+            return <button
+              key={segment.id}
+              type="button"
+              onPointerDown={beginScrub}
+              style={{ left, width }}
+              className={`absolute bottom-1 top-1 z-10 min-w-10 overflow-hidden rounded-lg border px-2 text-left transition ${segment.kind === 'freeze' ? 'border-amber-300 bg-gradient-to-br from-amber-100 to-orange-100 text-amber-950' : 'border-[#bfdbfe] bg-white text-[#0b172a]'} ${active ? 'ring-2 ring-[#2563eb]' : ''}`}
+            >
+              <span className="block truncate text-[10px] font-black uppercase tracking-[0.08em]">{segment.kind === 'freeze' ? 'Freeze' : 'Video'}</span>
+              <span className="block text-[10px] font-semibold tabular-nums">{segment.kind === 'freeze' ? `${segment.duration.toFixed(1)}s image` : `${segment.duration.toFixed(1)}s clip`}</span>
+              {segment.kind === 'freeze' && <span
+                title="Drag to change freeze duration"
+                onPointerDown={event => beginFreezeResize(event, segment)}
+                className="absolute bottom-1 right-1 z-20 grid h-7 w-7 cursor-ew-resize place-items-center rounded-md bg-amber-300 text-amber-950 shadow-[0_6px_14px_rgba(146,64,14,.25)] ring-1 ring-amber-500/50"
+              ><Snowflake size={13} /></span>}
+            </button>;
+          })}
+        </div>
+        {sourceDuration > 0.2 && <>
+          <span
+            title="Drag to crop or extend the clip start"
+            onPointerDown={event => beginTrimDrag(event, 'start')}
+            className="absolute bottom-1 top-3 z-40 grid w-4 -translate-x-1/2 cursor-ew-resize place-items-center rounded-lg bg-[#2563eb] text-white shadow-[0_0_0_2px_rgba(255,255,255,.9),0_8px_18px_rgba(37,99,235,.25)]"
+            style={{ left: `${trimLeftPct}%` }}
+          ><Scissors size={12} /></span>
+          <span
+            title="Drag to crop or extend the clip end"
+            onPointerDown={event => beginTrimDrag(event, 'end')}
+            className="absolute bottom-1 top-3 z-40 grid w-4 -translate-x-1/2 cursor-ew-resize place-items-center rounded-lg bg-[#2563eb] text-white shadow-[0_0_0_2px_rgba(255,255,255,.9),0_8px_18px_rgba(37,99,235,.25)]"
+            style={{ left: `${trimLeftPct + trimWidthPct}%` }}
+          ><Scissors size={12} /></span>
+        </>}
+        <span className="pointer-events-none absolute top-0 z-50 -translate-x-1/2 rounded-b-md bg-[#0b172a] px-1.5 py-0.5 text-[9px] font-black tabular-nums text-white shadow-[0_7px_16px_rgba(11,23,42,.22)]" style={{ left: `${playheadPct}%` }}>{timeLabel(playheadTime)}</span>
+        <span className="pointer-events-none absolute bottom-1 top-3 z-30 w-0.5 -translate-x-1/2 rounded-full bg-[#0b172a] shadow-[0_0_0_2px_rgba(255,255,255,.86)]" style={{ left: `${playheadPct}%` }} />
       </div>
     </div>
   </div>;
 }
 
-function OverlayTrackStrip({ annotations, selectedId, segments, playheadTime, onSelect, onTimingChange }: {
+function OverlayTrackStrip({ annotations, selectedId, segments, playheadTime, onSelect, onTimingChange, onBeginEdit }: {
   annotations: VideoAnnotation[];
   selectedId?: string;
   segments: TimelineSegment[];
   playheadTime: number;
   onSelect: (id: string) => void;
   onTimingChange: (id: string, patch: Partial<Pick<VideoAnnotation, 'startTime' | 'endTime'>>) => void;
+  onBeginEdit?: () => void;
 }) {
   const total = Math.max(0.2, timelineDuration(segments));
   const railRef = useRef<HTMLDivElement | null>(null);
@@ -1312,23 +1596,21 @@ function OverlayTrackStrip({ annotations, selectedId, segments, playheadTime, on
     event.preventDefault();
     event.stopPropagation();
     onSelect(annotation.id);
-    const originalStart = sourceToTimeline(segments, annotation.startTime);
-    const originalEnd = sourceToTimeline(segments, annotation.endTime);
+    onBeginEdit?.();
+    const originalStart = clampRange(annotation.startTime, 0, total);
+    const originalEnd = clampRange(annotation.endTime, originalStart + 0.2, total);
     const originalPointer = pointerTime(event.clientX, false);
     const onMove = (moveEvent: PointerEvent) => {
       const nextTimeline = pointerTime(moveEvent.clientX);
       const delta = pointerTime(moveEvent.clientX, false) - originalPointer;
       if (edge === 'start') {
-        const sourceTime = timelineToSource(segments, Math.min(originalEnd - 0.2, nextTimeline)).sourceTime;
-        onTimingChange(annotation.id, { startTime: sourceTime });
+        onTimingChange(annotation.id, { startTime: Math.min(originalEnd - 0.2, nextTimeline) });
       } else if (edge === 'end') {
-        const sourceTime = timelineToSource(segments, Math.max(originalStart + 0.2, nextTimeline)).sourceTime;
-        onTimingChange(annotation.id, { endTime: sourceTime });
+        onTimingChange(annotation.id, { endTime: Math.max(originalStart + 0.2, nextTimeline) });
       } else {
         const duration = annotation.endTime - annotation.startTime;
         const nextStartTimeline = snapTimelineTime(clampRange(originalStart + delta, 0, Math.max(0, total - 0.2)), segments);
-        const nextStart = timelineToSource(segments, nextStartTimeline).sourceTime;
-        onTimingChange(annotation.id, { startTime: nextStart, endTime: nextStart + duration });
+        onTimingChange(annotation.id, { startTime: nextStartTimeline, endTime: nextStartTimeline + duration });
       }
     };
     const onUp = () => {
@@ -1345,8 +1627,8 @@ function OverlayTrackStrip({ annotations, selectedId, segments, playheadTime, on
         {timelineSnapPoints(segments).map(point => <span key={point} className="pointer-events-none absolute bottom-1.5 top-1.5 z-0 w-px bg-[#bfdbfe]/70" style={{ left: `${(point / total) * 100}%` }} />)}
         {annotations.length === 0 && <div className="h-8 rounded-lg border border-dashed border-[#d7e5f6] bg-white/70" />}
         {annotations.map(annotation => {
-          const start = sourceToTimeline(segments, annotation.startTime);
-          const end = sourceToTimeline(segments, annotation.endTime);
+          const start = clampRange(annotation.startTime, 0, total);
+          const end = clampRange(annotation.endTime, start, total);
           const left = `${(start / total) * 100}%`;
           const width = `${Math.max(4, ((Math.max(start + 0.08, end) - start) / total) * 100)}%`;
           const active = annotation.id === selectedId;
@@ -1384,6 +1666,8 @@ export function VideoAnalysisTool({ onHome, onOpenBoard }: VideoAnalysisToolProp
   const [selection, setSelection] = useState<{ start: number[]; current: number[] } | null>(null);
   const [polygonDraft, setPolygonDraft] = useState<number[][]>([]);
   const [polygonHover, setPolygonHover] = useState<number[] | null>(null);
+  const [connectionDraftIds, setConnectionDraftIds] = useState<string[]>([]);
+  const [connectionHover, setConnectionHover] = useState<number[] | null>(null);
   const [freezes, setFreezes] = useState<FreezeSegment[]>([]);
   const [freezeSeconds, setFreezeSeconds] = useState(3);
   const [currentTime, setCurrentTime] = useState(0);
@@ -1398,6 +1682,8 @@ export function VideoAnalysisTool({ onHome, onOpenBoard }: VideoAnalysisToolProp
   const [labelEditor, setLabelEditor] = useState<{ id: string; value: string } | null>(null);
   const [exporting, setExporting] = useState(false);
   const [exportProgress, setExportProgress] = useState(0);
+  const [undoStack, setUndoStack] = useState<HistorySnapshot[]>([]);
+  const [redoStack, setRedoStack] = useState<HistorySnapshot[]>([]);
   const videoRef = useRef<HTMLVideoElement | null>(null);
   const stageRef = useRef<Konva.Stage | null>(null);
   const clipsRef = useRef<VideoClip[]>([]);
@@ -1408,13 +1694,23 @@ export function VideoAnalysisTool({ onHome, onOpenBoard }: VideoAnalysisToolProp
   const timelineSegments = useMemo(() => buildTimelineSegments(trimStart, safeTrimEnd || duration || 0, freezes), [duration, freezes, safeTrimEnd, trimStart]);
   const compositionDuration = useMemo(() => timelineDuration(timelineSegments), [timelineSegments]);
   const timelinePosition = useMemo(() => timelineToSource(timelineSegments, playheadTime), [playheadTime, timelineSegments]);
-  const stageSize = displaySize(stageWrapSize, currentClip, previewZoom);
+  const previewViewportSize = displaySize(stageWrapSize, currentClip);
+  const stageSize = useMemo(() => scaledSize(previewViewportSize, previewZoom), [previewViewportSize.height, previewViewportSize.width, previewZoom]);
   const mapper = useMemo(() => makeMapper(stageSize.width, stageSize.height), [stageSize.height, stageSize.width]);
   const selectedAnnotation = annotations.find(annotation => annotation.id === selectedId) ?? annotations.find(annotation => selectedIds.includes(annotation.id));
-  const selectedPoints = selectedAnnotation ? pointsAtTime(selectedAnnotation, currentTime) : undefined;
+  const selectedPoints = selectedAnnotation ? pointsAtTime(selectedAnnotation, playheadTime) : undefined;
   const selectedBounds = selectedAnnotation && selectedPoints ? boundsFromPoints(selectedAnnotation.type, selectedPoints) : undefined;
   const visibleAnnotations = annotations.slice().sort((a, b) => a.zIndex - b.zIndex);
-  const draftAnnotation = draft && tool !== 'zone' ? buildAnnotation(tool, draft.start, draft.current, style, currentTime, annotations.length + 1) : null;
+  const connectionPreviewPoints = (() => {
+    const sourceId = connectionDraftIds.at(-1);
+    const source = sourceId ? annotations.find(annotation => annotation.id === sourceId && annotation.type === 'player-circle') : undefined;
+    if (!source || !connectionHover) return undefined;
+    return [...annotationCenterAtTime(source, playheadTime), connectionHover[0], connectionHover[1]];
+  })();
+  const draftAnnotation = draft && tool !== 'zone' && tool !== 'connection-line' ? (() => {
+    const annotation = buildAnnotation(tool, draft.start, draft.current, style, playheadTime, annotations.length + 1);
+    return annotation ? { ...annotation, motion: 'none' as OverlayMotion } : null;
+  })() : null;
   const selectionRect = selection ? {
     x: Math.min(selection.start[0], selection.current[0]),
     y: Math.min(selection.start[1], selection.current[1]),
@@ -1437,6 +1733,47 @@ export function VideoAnalysisTool({ onHome, onOpenBoard }: VideoAnalysisToolProp
       setSelectedId(next.at(-1));
       return next;
     });
+  };
+
+  const clearConnectionDraft = () => {
+    setConnectionDraftIds([]);
+    setConnectionHover(null);
+  };
+
+  const pushHistory = () => {
+    const snapshot = makeHistorySnapshot(annotations, freezes);
+    setUndoStack(current => [...current.slice(-79), snapshot]);
+    setRedoStack([]);
+  };
+
+  const restoreHistorySnapshot = (snapshot: HistorySnapshot) => {
+    const restored = cloneHistorySnapshot(snapshot);
+    setAnnotations(restored.annotations);
+    setFreezes(restored.freezes);
+    setSingleSelection(undefined);
+    setDraft(null);
+    setSelection(null);
+    setPolygonDraft([]);
+    setPolygonHover(null);
+    clearConnectionDraft();
+  };
+
+  const undoHistory = () => {
+    const previous = undoStack.at(-1);
+    if (!previous) return;
+    const currentSnapshot = makeHistorySnapshot(annotations, freezes);
+    setUndoStack(current => current.slice(0, -1));
+    setRedoStack(current => [...current.slice(-79), currentSnapshot]);
+    restoreHistorySnapshot(previous);
+  };
+
+  const redoHistory = () => {
+    const next = redoStack.at(-1);
+    if (!next) return;
+    const currentSnapshot = makeHistorySnapshot(annotations, freezes);
+    setRedoStack(current => current.slice(0, -1));
+    setUndoStack(current => [...current.slice(-79), currentSnapshot]);
+    restoreHistorySnapshot(next);
   };
 
   useEffect(() => {
@@ -1527,11 +1864,12 @@ export function VideoAnalysisTool({ onHome, onOpenBoard }: VideoAnalysisToolProp
   }, [compositionDuration, currentClip, playbackRate, playing, timelineSegments]);
 
   useEffect(() => {
-    setSingleSelection(undefined);
     setDraft(null);
     setSelection(null);
     setPolygonDraft([]);
     setPolygonHover(null);
+    setConnectionDraftIds([]);
+    setConnectionHover(null);
     const stage = stageRef.current;
     if (stage) stage.container().style.cursor = tool === 'select' ? 'default' : 'crosshair';
   }, [tool]);
@@ -1628,18 +1966,56 @@ export function VideoAnalysisTool({ onHome, onOpenBoard }: VideoAnalysisToolProp
     return mapper.toRel(pointer.x, pointer.y);
   };
 
+  const pickConnectionDisc = (annotationId: string) => {
+    const target = annotations.find(annotation => annotation.id === annotationId && annotation.type === 'player-circle');
+    if (!target) return;
+    const previousId = connectionDraftIds.at(-1);
+    setSingleSelection(annotationId);
+    if (!previousId || previousId === annotationId) {
+      setConnectionDraftIds([annotationId]);
+      setConnectionHover(annotationCenterAtTime(target, playheadTime));
+      return;
+    }
+    const previous = annotations.find(annotation => annotation.id === previousId && annotation.type === 'player-circle');
+    if (!previous) {
+      setConnectionDraftIds([annotationId]);
+      return;
+    }
+    const existing = annotations.find(annotation => annotation.type === 'connection-line'
+      && annotation.connectionIds?.length === 2
+      && ((annotation.connectionIds[0] === previousId && annotation.connectionIds[1] === annotationId)
+        || (annotation.connectionIds[0] === annotationId && annotation.connectionIds[1] === previousId)));
+    if (existing) {
+      setSingleSelection(existing.id);
+      clearConnectionDraft();
+      return;
+    }
+    const points = [...annotationCenterAtTime(previous, playheadTime), ...annotationCenterAtTime(target, playheadTime)];
+    const annotationTime = snapTimelineTime(playheadTime, timelineSegments, 0.12);
+    const line = {
+      ...makeConnectionLine(points, style, annotationTime, Math.max(0, Math.min(previous.zIndex, target.zIndex) - 0.05), [previousId, annotationId]),
+      startTime: Math.min(previous.startTime, target.startTime, annotationTime),
+      endTime: Math.max(previous.endTime, target.endTime, annotationTime + 0.5),
+    };
+    pushHistory();
+    setAnnotations(current => [...current, line]);
+    setSingleSelection(line.id);
+    clearConnectionDraft();
+  };
+
   const beginDraft = (stage: Konva.Stage) => {
     if (tool === 'select') {
       const rel = pointerRel(stage);
       setSelection({ start: [rel.x, rel.y], current: [rel.x, rel.y] });
-      setSingleSelection(undefined);
       return;
     }
     const rel = pointerRel(stage);
     if (tool === 'zone') {
       const next = [...polygonDraft, [rel.x, rel.y]];
       if (next.length >= 4) {
-        const annotation = makePolygonArea(next.flat(), style, currentTime, annotations.length + 1);
+        const annotationTime = snapTimelineTime(playheadTime, timelineSegments, 0.12);
+        const annotation = makePolygonArea(next.flat(), style, annotationTime, annotations.length + 1);
+        pushHistory();
         setAnnotations(current => [...current, annotation]);
         setSingleSelection(annotation.id);
         setPolygonDraft([]);
@@ -1651,18 +2027,23 @@ export function VideoAnalysisTool({ onHome, onOpenBoard }: VideoAnalysisToolProp
       }
       return;
     }
+    if (tool === 'connection-line') {
+      return;
+    }
     setDraft({ start: [rel.x, rel.y], current: [rel.x, rel.y] });
   };
 
   const finishDraft = (stage: Konva.Stage) => {
     if (!draft || tool === 'select') return;
     const rel = pointerRel(stage);
-    const annotation = buildAnnotation(tool, draft.start, [rel.x, rel.y], style, currentTime, annotations.length + 1);
+    const annotationTime = snapTimelineTime(playheadTime, timelineSegments, 0.12);
+    const annotation = buildAnnotation(tool, draft.start, [rel.x, rel.y], style, annotationTime, annotations.length + 1);
     const distance = Math.hypot(rel.x - draft.start[0], rel.y - draft.start[1]);
-    if (annotation && (distance > 0.006 || tool === 'text' || tool === 'spotlight' || tool === 'highlight')) {
+    if (annotation && (distance > 0.006 || tool === 'text' || tool === 'spotlight' || tool === 'highlight' || tool === 'player-circle')) {
+      pushHistory();
       setAnnotations(current => [...current, annotation]);
       setSingleSelection(annotation.id);
-      setTool('select');
+      if (tool !== 'player-circle') setTool('select');
     }
     setDraft(null);
   };
@@ -1672,10 +2053,10 @@ export function VideoAnalysisTool({ onHome, onOpenBoard }: VideoAnalysisToolProp
       if (annotation.id !== annotationId) return annotation;
       const widened = {
         ...annotation,
-        startTime: Math.min(annotation.startTime, currentTime),
-        endTime: Math.max(annotation.endTime, currentTime + 0.25),
+        startTime: Math.min(annotation.startTime, playheadTime),
+        endTime: Math.max(annotation.endTime, playheadTime + 0.25),
       };
-      return upsertKeyframe(widened, currentTime, points);
+      return upsertKeyframe(widened, playheadTime, points);
     }));
     setSingleSelection(annotationId);
   };
@@ -1686,10 +2067,10 @@ export function VideoAnalysisTool({ onHome, onOpenBoard }: VideoAnalysisToolProp
       if (!ids.includes(annotation.id)) return annotation;
       const widened = {
         ...annotation,
-        startTime: Math.min(annotation.startTime, currentTime),
-        endTime: Math.max(annotation.endTime, currentTime + 0.25),
+        startTime: Math.min(annotation.startTime, playheadTime),
+        endTime: Math.max(annotation.endTime, playheadTime + 0.25),
       };
-      return upsertKeyframe(widened, currentTime, translatePoints(annotation.type, pointsAtTime(annotation, currentTime), dx, dy));
+      return upsertKeyframe(widened, playheadTime, translatePoints(annotation.type, pointsAtTime(annotation, playheadTime), dx, dy));
     }));
     setSelectedIds(ids);
     setSelectedId(annotationId);
@@ -1708,7 +2089,8 @@ export function VideoAnalysisTool({ onHome, onOpenBoard }: VideoAnalysisToolProp
       const box = { x1, y1, x2, y2 };
       const ids = visibleAnnotations
         .filter(annotation => !annotation.hidden)
-        .filter(annotation => intersects(box, boundsFromPoints(annotation.type, pointsAtTime(annotation, currentTime))))
+        .filter(annotation => isAnnotationActive(annotation, playheadTime))
+        .filter(annotation => intersects(box, boundsFromPoints(annotation.type, pointsAtTime(annotation, playheadTime))))
         .map(annotation => annotation.id);
       setSelectedIds(ids);
       setSelectedId(ids.at(-1));
@@ -1719,6 +2101,7 @@ export function VideoAnalysisTool({ onHome, onOpenBoard }: VideoAnalysisToolProp
   const updateSelected = (patch: Partial<VideoAnnotation>) => {
     const targetId = selectedAnnotation?.id;
     if (!targetId) return;
+    pushHistory();
     setAnnotations(current => current.map(annotation => annotation.id === targetId ? { ...annotation, ...patch } : annotation));
   };
 
@@ -1731,6 +2114,7 @@ export function VideoAnalysisTool({ onHome, onOpenBoard }: VideoAnalysisToolProp
 
   const saveLabelEditor = () => {
     if (!labelEditor) return;
+    pushHistory();
     setAnnotations(current => current.map(item => item.id === labelEditor.id ? { ...item, text: labelEditor.value } : item));
     setSingleSelection(labelEditor.id);
     setLabelEditor(null);
@@ -1744,21 +2128,37 @@ export function VideoAnalysisTool({ onHome, onOpenBoard }: VideoAnalysisToolProp
   const selectOverlayTrack = (annotationId: string) => {
     const annotation = annotations.find(item => item.id === annotationId);
     setSingleSelection(annotationId);
-    if (annotation && !isAnnotationActive(annotation, currentTime)) selectAtTime(annotation.startTime);
+    if (annotation && !isAnnotationActive(annotation, playheadTime)) selectAtTimeline(annotation.startTime);
   };
 
   const updateSelectedTiming = (patch: Partial<Pick<VideoAnnotation, 'startTime' | 'endTime'>>) => {
     if (!selectedAnnotation) return;
-    const nextStart = clampRange(patch.startTime ?? selectedAnnotation.startTime, 0, Math.max(0, safeTrimEnd - 0.2));
-    const nextEnd = clampRange(patch.endTime ?? selectedAnnotation.endTime, nextStart + 0.2, Math.max(nextStart + 0.2, safeTrimEnd || duration || nextStart + 0.2));
+    const total = Math.max(0.2, compositionDuration || safeTrimEnd || duration || 0.2);
+    const nextStart = clampRange(patch.startTime ?? selectedAnnotation.startTime, 0, Math.max(0, total - 0.2));
+    const nextEnd = clampRange(patch.endTime ?? selectedAnnotation.endTime, nextStart + 0.2, total);
     updateSelected({ startTime: nextStart, endTime: nextEnd });
+  };
+
+  const snapSelectedTiming = (edge: 'start' | 'end') => {
+    if (!selectedAnnotation) return;
+    const snapped = closestTimelineSnap(edge === 'start' ? selectedAnnotation.startTime : selectedAnnotation.endTime, timelineSegments);
+    if (edge === 'start') updateSelectedTiming({ startTime: Math.min(snapped, selectedAnnotation.endTime - 0.2) });
+    else updateSelectedTiming({ endTime: Math.max(snapped, selectedAnnotation.startTime + 0.2) });
+  };
+
+  const fitSelectedToCurrentSegment = () => {
+    if (!selectedAnnotation || !timelinePosition.segment) return;
+    const startTime = timelinePosition.segment.timelineStart;
+    const endTime = timelinePosition.segment.timelineStart + timelinePosition.segment.duration;
+    updateSelectedTiming({ startTime, endTime });
   };
 
   const updateAnnotationTiming = (annotationId: string, patch: Partial<Pick<VideoAnnotation, 'startTime' | 'endTime'>>) => {
     setAnnotations(current => current.map(annotation => {
       if (annotation.id !== annotationId) return annotation;
-      const nextStart = clampRange(patch.startTime ?? annotation.startTime, 0, Math.max(0, safeTrimEnd - 0.2));
-      const nextEnd = clampRange(patch.endTime ?? annotation.endTime, nextStart + 0.2, Math.max(nextStart + 0.2, safeTrimEnd || duration || nextStart + 0.2));
+      const total = Math.max(0.2, compositionDuration || safeTrimEnd || duration || 0.2);
+      const nextStart = clampRange(patch.startTime ?? annotation.startTime, 0, Math.max(0, total - 0.2));
+      const nextEnd = clampRange(patch.endTime ?? annotation.endTime, nextStart + 0.2, total);
       return { ...annotation, startTime: nextStart, endTime: nextEnd };
     }));
     setSingleSelection(annotationId);
@@ -1773,8 +2173,9 @@ export function VideoAnalysisTool({ onHome, onOpenBoard }: VideoAnalysisToolProp
 
   const addKeyframe = () => {
     if (!selectedAnnotation) return;
+    pushHistory();
     setAnnotations(current => current.map(annotation => annotation.id === selectedAnnotation.id
-      ? upsertKeyframe(annotation, currentTime, pointsAtTime(annotation, currentTime))
+      ? upsertKeyframe(annotation, playheadTime, pointsAtTime(annotation, playheadTime))
       : annotation));
   };
 
@@ -1782,13 +2183,14 @@ export function VideoAnalysisTool({ onHome, onOpenBoard }: VideoAnalysisToolProp
     if (!selectedAnnotation?.keyframes.length) return;
     const ordered = selectedAnnotation.keyframes.slice().sort((a, b) => a.time - b.time);
     const target = direction < 0
-      ? ordered.filter(keyframe => keyframe.time < currentTime - 0.04).at(-1) ?? ordered[0]
-      : ordered.find(keyframe => keyframe.time > currentTime + 0.04) ?? ordered.at(-1);
-    if (target) selectAtTime(target.time);
+      ? ordered.filter(keyframe => keyframe.time < playheadTime - 0.04).at(-1) ?? ordered[0]
+      : ordered.find(keyframe => keyframe.time > playheadTime + 0.04) ?? ordered.at(-1);
+    if (target) selectAtTimeline(target.time);
   };
 
   const deleteKeyframe = (keyframeId: string) => {
     if (!selectedAnnotation) return;
+    pushHistory();
     setAnnotations(current => current.map(annotation => annotation.id === selectedAnnotation.id
       ? { ...annotation, keyframes: annotation.keyframes.filter(keyframe => keyframe.id !== keyframeId) }
       : annotation));
@@ -1797,19 +2199,22 @@ export function VideoAnalysisTool({ onHome, onOpenBoard }: VideoAnalysisToolProp
   const deleteSelected = () => {
     const ids = selectedIds.length ? selectedIds : selectedId ? [selectedId] : [];
     if (!ids.length) return;
+    pushHistory();
     setAnnotations(current => current.filter(annotation => !ids.includes(annotation.id)));
     setSingleSelection(undefined);
   };
 
   const duplicateSelected = () => {
     if (!selectedAnnotation) return;
-    const copy = duplicateAnnotation(selectedAnnotation, currentTime);
+    const copy = duplicateAnnotation(selectedAnnotation, playheadTime);
+    pushHistory();
     setAnnotations(current => [...current, copy]);
     setSingleSelection(copy.id);
   };
 
   const addFreeze = () => {
     const freeze: FreezeSegment = { id: id(), time: currentTime, duration: clampRange(freezeSeconds, 0.5, 10) };
+    pushHistory();
     setFreezes(current => [...current, freeze].sort((a, b) => a.time - b.time));
   };
 
@@ -1817,6 +2222,27 @@ export function VideoAnalysisTool({ onHome, onOpenBoard }: VideoAnalysisToolProp
     setFreezes(current => current.map(freeze => freeze.id === freezeId
       ? { ...freeze, duration: clampRange(duration, 0.5, 10) }
       : freeze));
+  };
+
+  const updateTrimRange = (nextStart: number, nextEnd: number) => {
+    const sourceDuration = duration || currentClip?.duration || 0;
+    if (!sourceDuration) return;
+    const safeStart = clampRange(nextStart, 0, Math.max(0, nextEnd - 0.2));
+    const safeEnd = clampRange(nextEnd, safeStart + 0.2, sourceDuration);
+    const nextSegments = buildTimelineSegments(safeStart, safeEnd, freezes);
+    const nextTotal = Math.max(0, timelineDuration(nextSegments));
+    const nextPlayhead = clampRange(playheadTime, 0, nextTotal);
+    const position = timelineToSource(nextSegments, nextPlayhead);
+    const video = videoRef.current;
+    if (video) {
+      video.pause();
+      video.currentTime = position.sourceTime;
+    }
+    setPlaying(false);
+    setTrimStart(safeStart);
+    setTrimEnd(safeEnd);
+    setPlayheadTime(position.timelineTime);
+    setCurrentTime(position.sourceTime);
   };
 
   const exportSnapshot = async () => {
@@ -1831,7 +2257,7 @@ export function VideoAnalysisTool({ onHome, onOpenBoard }: VideoAnalysisToolProp
     if (!ctx) return;
     ctx.drawImage(video, 0, 0, width, height);
     drawCanvasGrid(ctx, gridMode, width, height);
-    annotations.forEach(annotation => drawCanvasAnnotation(ctx, annotation, currentTime, width, height, playheadTime));
+    annotations.slice().sort((a, b) => a.zIndex - b.zIndex).forEach(annotation => drawCanvasAnnotation(ctx, annotation, playheadTime, width, height, playheadTime, annotations));
     await new Promise<void>(resolve => canvas.toBlob(blob => {
       if (blob) downloadBlob(blob, `video-analysis-${timeLabel(currentTime).replace(':', '-')}.png`);
       resolve();
@@ -1839,30 +2265,43 @@ export function VideoAnalysisTool({ onHome, onOpenBoard }: VideoAnalysisToolProp
   };
 
   const exportAnalysis = async () => {
-    const video = videoRef.current;
-    if (!video || !currentClip || exporting) return;
+    const previewVideo = videoRef.current;
+    if (!previewVideo || !currentClip || exporting) return;
     setExporting(true);
     setExportProgress(0);
-    const originalTime = video.currentTime;
-    const originalMuted = video.muted;
-    const originalRate = video.playbackRate;
-    video.pause();
-    video.muted = true;
-    video.playbackRate = playbackRate;
-    const outputWidth = Math.min(1920, currentClip.width || video.videoWidth || 1280);
+    const originalTime = previewVideo.currentTime;
+    const originalRate = previewVideo.playbackRate;
+    previewVideo.pause();
+    setPlaying(false);
+    const exportVideo = document.createElement('video');
+    exportVideo.src = currentClip.url;
+    exportVideo.muted = true;
+    exportVideo.playsInline = true;
+    exportVideo.preload = 'auto';
+    exportVideo.playbackRate = playbackRate;
+    await waitForVideoMetadata(exportVideo);
+    const outputWidth = currentClip.width || exportVideo.videoWidth || previewVideo.videoWidth || 1280;
     const outputHeight = Math.round(outputWidth / ((currentClip.width || 1280) / (currentClip.height || 720)));
     const canvas = document.createElement('canvas');
     canvas.width = outputWidth;
     canvas.height = outputHeight;
     const ctx = canvas.getContext('2d');
     if (!ctx) {
+      exportVideo.pause();
+      exportVideo.removeAttribute('src');
+      exportVideo.load();
       setExporting(false);
       return;
     }
     const fps = 30;
-    const stream = canvas.captureStream(fps);
+    const stream = canvas.captureStream(0);
+    const canvasTrack = stream.getVideoTracks()[0] as CanvasCaptureMediaStreamTrack | undefined;
     const mimeType = bestVideoMimeType();
-    const recorder = new MediaRecorder(stream, mimeType ? { mimeType } : undefined);
+    const recorderOptions: MediaRecorderOptions = {
+      videoBitsPerSecond: Math.max(8_000_000, Math.round(outputWidth * outputHeight * fps * 0.16)),
+    };
+    if (mimeType) recorderOptions.mimeType = mimeType;
+    const recorder = new MediaRecorder(stream, recorderOptions);
     const chunks: BlobPart[] = [];
     recorder.ondataavailable = event => {
       if (event.data.size) chunks.push(event.data);
@@ -1870,49 +2309,68 @@ export function VideoAnalysisTool({ onHome, onOpenBoard }: VideoAnalysisToolProp
     const stopped = new Promise<void>(resolve => { recorder.onstop = () => resolve(); });
     const exportSegments = buildTimelineSegments(trimStart, safeTrimEnd || duration, freezes);
     const totalOutput = Math.max(0.2, timelineDuration(exportSegments));
+    const exportRate = Math.max(0.05, playbackRate || 1);
+    const exportDuration = totalOutput / exportRate;
+    const totalFrames = Math.max(1, Math.ceil(exportDuration * fps));
 
-    const renderFrame = (sourceTime: number, effectTime: number) => {
+    const renderFrame = (effectTime: number) => {
       ctx.fillStyle = '#020617';
       ctx.fillRect(0, 0, outputWidth, outputHeight);
-      ctx.drawImage(video, 0, 0, outputWidth, outputHeight);
+      ctx.drawImage(exportVideo, 0, 0, outputWidth, outputHeight);
       drawCanvasGrid(ctx, gridMode, outputWidth, outputHeight);
-      annotations.forEach(annotation => drawCanvasAnnotation(ctx, annotation, sourceTime, outputWidth, outputHeight, effectTime));
+      annotations.slice().sort((a, b) => a.zIndex - b.zIndex).forEach(annotation => drawCanvasAnnotation(ctx, annotation, effectTime, outputWidth, outputHeight, effectTime, annotations));
+      canvasTrack?.requestFrame();
     };
 
     try {
       const initialPosition = timelineToSource(exportSegments, 0);
-      await seekVideo(video, initialPosition.sourceTime);
-      recorder.start(100);
-      await new Promise<void>(resolve => {
-        const startedAt = performance.now();
-        const step = () => {
-          const timelineTime = Math.min(totalOutput, (performance.now() - startedAt) / 1000);
-          const position = timelineToSource(exportSegments, timelineTime);
-          if (Math.abs((video.currentTime || 0) - position.sourceTime) > 0.035) video.currentTime = position.sourceTime;
-          video.pause();
-          renderFrame(position.sourceTime, timelineTime);
-          setExportProgress(clampRange(timelineTime / totalOutput, 0, 1));
-          if (timelineTime >= totalOutput - 0.001) {
-            renderFrame(position.sourceTime, timelineTime);
-            resolve();
-            return;
+      await seekVideo(exportVideo, initialPosition.sourceTime);
+      exportVideo.pause();
+      recorder.start();
+      let activeSegmentId: string | undefined;
+      const startedAt = performance.now();
+      for (let frame = 0; frame < totalFrames; frame += 1) {
+        const outputTime = Math.min(exportDuration, frame / fps);
+        const timelineTime = Math.min(totalOutput, outputTime * exportRate);
+        const position = timelineToSource(exportSegments, timelineTime);
+        const segment = position.segment;
+        if (segment?.id !== activeSegmentId) {
+          activeSegmentId = segment?.id;
+          if (!segment || segment.kind === 'freeze') {
+            exportVideo.pause();
+            if (Math.abs((exportVideo.currentTime || 0) - position.sourceTime) > 0.04) await seekVideo(exportVideo, position.sourceTime);
+          } else {
+            exportVideo.playbackRate = exportRate;
+            if (Math.abs((exportVideo.currentTime || 0) - position.sourceTime) > 0.025) await seekVideo(exportVideo, position.sourceTime);
+            await exportVideo.play().catch(() => undefined);
           }
-          requestAnimationFrame(step);
-        };
-        requestAnimationFrame(step);
-      });
+        }
+        if (!segment || segment.kind === 'freeze') exportVideo.pause();
+        else if (Math.abs((exportVideo.currentTime || 0) - position.sourceTime) > 0.04) await seekVideo(exportVideo, position.sourceTime);
+        const frameSourceTime = segment?.kind === 'video'
+          ? clampRange(exportVideo.currentTime || position.sourceTime, segment.sourceStart, segment.sourceEnd)
+          : position.sourceTime;
+        const frameTimelineTime = segment?.kind === 'video'
+          ? segment.timelineStart + (frameSourceTime - segment.sourceStart)
+          : timelineTime;
+        renderFrame(frameTimelineTime);
+        setExportProgress(clampRange(timelineTime / totalOutput, 0, 1));
+        await wait(startedAt + ((frame + 1) / fps) * 1000 - performance.now());
+      }
       recorder.stop();
       await stopped;
       const type = recorder.mimeType || mimeType || 'video/webm';
       const extension = type.includes('mp4') ? 'mp4' : 'webm';
       downloadBlob(new Blob(chunks, { type }), `football-video-analysis.${extension}`);
     } finally {
-      video.pause();
-      await seekVideo(video, Math.min(originalTime, video.duration || originalTime));
-      video.muted = originalMuted;
-      video.playbackRate = originalRate;
-      setCurrentTime(video.currentTime || 0);
-      setPlayheadTime(sourceToTimeline(timelineSegments, video.currentTime || 0));
+      stream.getTracks().forEach(track => track.stop());
+      exportVideo.pause();
+      exportVideo.removeAttribute('src');
+      exportVideo.load();
+      previewVideo.pause();
+      previewVideo.playbackRate = originalRate;
+      setCurrentTime(previewVideo.currentTime || originalTime || 0);
+      setPlayheadTime(sourceToTimeline(timelineSegments, previewVideo.currentTime || originalTime || 0));
       setExportProgress(0);
       setExporting(false);
     }
@@ -1940,65 +2398,82 @@ export function VideoAnalysisTool({ onHome, onOpenBoard }: VideoAnalysisToolProp
       <section className="video-canvas-area relative flex min-h-0 flex-col overflow-hidden bg-[linear-gradient(90deg,rgba(37,99,235,.035)_1px,transparent_1px),linear-gradient(0deg,rgba(37,99,235,.035)_1px,transparent_1px),radial-gradient(circle_at_18%_12%,#dbeafe,transparent_32%),linear-gradient(135deg,#f6f9ff,#eef7ff_48%,#fbfbf4)] bg-[size:70px_70px,70px_70px,auto,auto]">
         <div ref={stageWrapRef} className="relative min-h-0 flex-1 overflow-hidden p-1.5">
           <div className="grid h-full w-full place-items-center">
-            <div className="relative overflow-hidden rounded-xl bg-slate-950 shadow-[0_24px_70px_rgba(11,23,42,.28)] ring-1 ring-[#d7e5f6]" style={{ width: stageSize.width, height: stageSize.height }}>
+            <div className="relative overflow-hidden rounded-xl bg-slate-950 shadow-[0_24px_70px_rgba(11,23,42,.28)] ring-1 ring-[#d7e5f6]" style={{ width: previewViewportSize.width, height: previewViewportSize.height }}>
               <div className="absolute right-3 top-3 z-30 flex h-9 items-center gap-2 rounded-lg border border-white/15 bg-slate-950/72 px-2 text-white shadow-[0_10px_30px_rgba(2,6,23,.3)] backdrop-blur">
                 <Gauge size={14} />
                 <input aria-label="Preview zoom" type="range" min="1" max="1.7" step="0.02" value={previewZoom} onChange={event => setPreviewZoom(Number(event.target.value))} className="h-7 w-24 accent-[#38bdf8]" />
                 <span className="w-9 text-right text-[10px] font-black tabular-nums">{Math.round(previewZoom * 100)}%</span>
               </div>
-              {currentClip && <video
-                key={currentClip.id}
-                ref={videoRef}
-                src={currentClip.url}
-                playsInline
-                preload="metadata"
-                onLoadedMetadata={updateClipMetadata}
-                className="absolute inset-0 h-full w-full object-cover"
-              />}
-              <Stage
-                ref={stageRef}
-                width={stageSize.width}
-                height={stageSize.height}
-                className="absolute inset-0"
-                onMouseDown={event => {
-                  const stage = event.target.getStage();
-                  if (!stage) return;
-                  if (event.target !== stage && tool === 'select') return;
-                  beginDraft(stage);
-                }}
-                onMouseMove={event => {
-                  const stage = event.target.getStage();
-                  if (!stage) return;
-                  const rel = pointerRel(stage);
-                  if (tool === 'zone' && polygonDraft.length) setPolygonHover([rel.x, rel.y]);
-                  setSelection(current => current ? { ...current, current: [rel.x, rel.y] } : current);
-                  setDraft(current => current ? { ...current, current: [rel.x, rel.y] } : current);
-                }}
-                onMouseUp={event => {
-                  const stage = event.target.getStage();
-                  if (!stage) return;
-                  if (selection) finishSelection(stage);
-                  else finishDraft(stage);
-                }}
-                onTouchStart={event => {
-                  const stage = event.target.getStage();
-                  if (stage) beginDraft(stage);
-                }}
-                onTouchMove={event => {
-                  const stage = event.target.getStage();
-                  if (!stage) return;
-                  const rel = pointerRel(stage);
-                  if (tool === 'zone' && polygonDraft.length) setPolygonHover([rel.x, rel.y]);
-                  setSelection(current => current ? { ...current, current: [rel.x, rel.y] } : current);
-                  setDraft(current => current ? { ...current, current: [rel.x, rel.y] } : current);
-                }}
-                onTouchEnd={event => {
-                  const stage = event.target.getStage();
-                  if (!stage) return;
-                  if (selection) finishSelection(stage);
-                  else finishDraft(stage);
-                }}
-              >
+              <div className="absolute left-1/2 top-1/2" style={{ width: stageSize.width, height: stageSize.height, transform: 'translate(-50%, -50%)' }}>
+                {currentClip && <video
+                  key={currentClip.id}
+                  ref={videoRef}
+                  src={currentClip.url}
+                  playsInline
+                  preload="metadata"
+                  onLoadedMetadata={updateClipMetadata}
+                  className="absolute inset-0 h-full w-full object-cover"
+                />}
+                <Stage
+                  ref={stageRef}
+                  width={stageSize.width}
+                  height={stageSize.height}
+                  className="absolute inset-0"
+                  onContextMenu={event => {
+                    event.evt.preventDefault();
+                    if (connectionDraftIds.length) clearConnectionDraft();
+                  }}
+                  onMouseDown={event => {
+                    const stage = event.target.getStage();
+                    if (!stage) return;
+                    if (connectionDraftIds.length && event.target === stage) {
+                      event.evt.preventDefault();
+                      clearConnectionDraft();
+                      return;
+                    }
+                    if (event.evt.button === 2) {
+                      event.evt.preventDefault();
+                      return;
+                    }
+                    if (event.target !== stage && tool === 'select') return;
+                    beginDraft(stage);
+                  }}
+                  onMouseMove={event => {
+                    const stage = event.target.getStage();
+                    if (!stage) return;
+                    const rel = pointerRel(stage);
+                    if (tool === 'zone' && polygonDraft.length) setPolygonHover([rel.x, rel.y]);
+                    if (tool === 'player-circle' && connectionDraftIds.length) setConnectionHover([rel.x, rel.y]);
+                    setSelection(current => current ? { ...current, current: [rel.x, rel.y] } : current);
+                    setDraft(current => current ? { ...current, current: [rel.x, rel.y] } : current);
+                  }}
+                  onMouseUp={event => {
+                    const stage = event.target.getStage();
+                    if (!stage) return;
+                    if (selection) finishSelection(stage);
+                    else finishDraft(stage);
+                  }}
+                  onTouchStart={event => {
+                    const stage = event.target.getStage();
+                    if (!stage) return;
+                    if (event.target !== stage && tool === 'select') return;
+                    beginDraft(stage);
+                  }}
+                  onTouchMove={event => {
+                    const stage = event.target.getStage();
+                    if (!stage) return;
+                    const rel = pointerRel(stage);
+                    if (tool === 'zone' && polygonDraft.length) setPolygonHover([rel.x, rel.y]);
+                    setSelection(current => current ? { ...current, current: [rel.x, rel.y] } : current);
+                    setDraft(current => current ? { ...current, current: [rel.x, rel.y] } : current);
+                  }}
+                  onTouchEnd={event => {
+                    const stage = event.target.getStage();
+                    if (!stage) return;
+                    if (selection) finishSelection(stage);
+                    else finishDraft(stage);
+                  }}
+                >
                 <Layer listening={false}>
                   {gridMode !== 'off' && <>
                     {(gridMode === 'thirds' ? [1 / 3, 2 / 3] : [0.18, 0.38, 0.62, 0.82]).map(value => <Line key={`v-${value}`} points={[stageSize.width * value, 0, stageSize.width * value, stageSize.height]} stroke="#ffffff" strokeWidth={2} opacity={0.34} dash={[14, 14]} />)}
@@ -2006,20 +2481,41 @@ export function VideoAnalysisTool({ onHome, onOpenBoard }: VideoAnalysisToolProp
                   </>}
                 </Layer>
                 <Layer>
+                  {connectionPreviewPoints && <Line
+                    points={[
+                      ...mapper.toAbs(connectionPreviewPoints[0], connectionPreviewPoints[1]),
+                      ...mapper.toAbs(connectionPreviewPoints[2], connectionPreviewPoints[3]),
+                    ]}
+                    stroke="#e5e7eb"
+                    strokeWidth={Math.max(2.5, style.strokeWidth)}
+                    opacity={0.82}
+                    lineCap="round"
+                    lineJoin="round"
+                    shadowColor="#020617"
+                    shadowBlur={6}
+                    shadowOpacity={0.22}
+                    listening={false}
+                  />}
                   {visibleAnnotations.map(annotation => <VideoAnnotationShape
                     key={annotation.id}
                     annotation={annotation}
-                    time={currentTime}
+                    time={playheadTime}
                     effectTime={playheadTime}
                     mapper={mapper}
-                    selected={selectedIds.includes(annotation.id)}
+                    selected={selectedIds.includes(annotation.id) || connectionDraftIds.includes(annotation.id)}
+                    linkedAnnotations={annotations}
+                    connectMode={tool === 'player-circle'}
+                    connectArmed={connectionDraftIds.length > 0}
                     onSelect={selectAnnotation}
                     onMoveAtTime={moveAnnotationAtTime}
                     onTranslateAtTime={translateAnnotationAtTime}
                     onEditText={editAnnotationText}
                     onSetBend={setAnnotationBend}
+                    onConnectPick={pickConnectionDisc}
+                    onConnectCancel={clearConnectionDraft}
+                    onBeginEdit={pushHistory}
                   />)}
-                  {draftAnnotation && <VideoAnnotationShape annotation={draftAnnotation} time={currentTime} effectTime={playheadTime} mapper={mapper} selected={false} onSelect={() => undefined} onMoveAtTime={() => undefined} onTranslateAtTime={() => undefined} onEditText={() => undefined} onSetBend={() => undefined} />}
+                  {draftAnnotation && <VideoAnnotationShape annotation={draftAnnotation} time={playheadTime} effectTime={playheadTime} mapper={mapper} selected={false} linkedAnnotations={annotations} onSelect={() => undefined} onMoveAtTime={() => undefined} onTranslateAtTime={() => undefined} onEditText={() => undefined} onSetBend={() => undefined} />}
                   {tool === 'zone' && polygonDraft.length > 0 && <Group listening={false}>
                     <Line
                       points={[...polygonDraft, polygonHover].filter(Boolean).flatMap(point => mapper.toAbs(point![0], point![1]))}
@@ -2050,7 +2546,8 @@ export function VideoAnalysisTool({ onHome, onOpenBoard }: VideoAnalysisToolProp
                     listening={false}
                   />}
                 </Layer>
-              </Stage>
+                </Stage>
+              </div>
               {exporting && <div className="absolute inset-x-6 bottom-6 z-30 overflow-hidden rounded-lg bg-white/90 p-2 shadow-[0_12px_40px_rgba(11,23,42,.28)] backdrop-blur">
                 <div className="h-2 overflow-hidden rounded-full bg-[#d7e5f6]">
                   <div className="h-full rounded-full bg-[#2563eb]" style={{ width: `${Math.round(exportProgress * 100)}%` }} />
@@ -2059,14 +2556,26 @@ export function VideoAnalysisTool({ onHome, onOpenBoard }: VideoAnalysisToolProp
             </div>
           </div>
         </div>
-        <OverlayTrackStrip annotations={annotations} selectedId={selectedId} segments={timelineSegments} playheadTime={playheadTime} onSelect={selectOverlayTrack} onTimingChange={updateAnnotationTiming} />
-        <MediaStrip segments={timelineSegments} playheadTime={playheadTime} onSeek={selectAtTimeline} onFreezeDurationChange={updateFreezeDuration} />
+        <OverlayTrackStrip annotations={annotations} selectedId={selectedId} segments={timelineSegments} playheadTime={playheadTime} onSelect={selectOverlayTrack} onTimingChange={updateAnnotationTiming} onBeginEdit={pushHistory} />
+        <MediaStrip
+          segments={timelineSegments}
+          playheadTime={playheadTime}
+          trimStart={trimStart}
+          trimEnd={safeTrimEnd || duration || 0}
+          sourceDuration={duration || 0}
+          onSeek={selectAtTimeline}
+          onFreezeDurationChange={updateFreezeDuration}
+          onTrimChange={updateTrimRange}
+          onBeginEdit={pushHistory}
+        />
 
         <div className="shrink-0 border-t border-[#d7e5f6] bg-white/88 p-2 shadow-[0_-18px_50px_rgba(11,23,42,.07)] backdrop-blur">
           <div className="mx-auto flex max-w-6xl flex-wrap items-center gap-2">
             <button type="button" onClick={() => void togglePlayback()} className="grid h-10 w-10 place-items-center rounded-lg bg-[#2563eb] text-white disabled:opacity-45" disabled={!currentClip}>{playing ? <Pause size={18} /> : <Play size={18} />}</button>
-            <button type="button" onClick={() => selectAtTimeline(Math.max(0, playheadTime - 0.5))} className="grid h-10 w-10 place-items-center rounded-lg border border-[#d7e5f6] bg-white/80 text-[#0b172a]"><ArrowLeft size={16} /></button>
-            <button type="button" onClick={() => selectAtTimeline(Math.min(compositionDuration || 0, playheadTime + 0.5))} className="grid h-10 w-10 place-items-center rounded-lg border border-[#d7e5f6] bg-white/80 text-[#0b172a]"><MoveRight size={16} /></button>
+            <button type="button" title="Undo" onClick={undoHistory} disabled={!undoStack.length} className="grid h-10 w-10 place-items-center rounded-lg border border-[#d7e5f6] bg-white/80 text-[#0b172a] disabled:opacity-35"><Undo2 size={16} /></button>
+            <button type="button" title="Redo" onClick={redoHistory} disabled={!redoStack.length} className="grid h-10 w-10 place-items-center rounded-lg border border-[#d7e5f6] bg-white/80 text-[#0b172a] disabled:opacity-35"><Redo2 size={16} /></button>
+            <button type="button" title="Previous frame" onClick={() => selectAtTimeline(Math.max(0, playheadTime - FRAME_STEP_SECONDS))} className="grid h-10 w-10 place-items-center rounded-lg border border-[#d7e5f6] bg-white/80 text-[#0b172a]"><ArrowLeft size={16} /></button>
+            <button type="button" title="Next frame" onClick={() => selectAtTimeline(Math.min(compositionDuration || 0, playheadTime + FRAME_STEP_SECONDS))} className="grid h-10 w-10 place-items-center rounded-lg border border-[#d7e5f6] bg-white/80 text-[#0b172a]"><ArrowRight size={16} /></button>
             <span className="rounded-lg border border-[#d7e5f6] bg-white/80 px-3 py-2 text-center text-xs font-black tabular-nums text-[#0b172a]">{timeLabel(playheadTime)} / {timeLabel(compositionDuration || 0)}</span>
             <span className="rounded-lg border border-[#d7e5f6] bg-white/80 px-3 py-2 text-[10px] font-black uppercase tracking-[0.14em] text-[#2563eb]">{timelinePosition.segment?.kind === 'freeze' ? 'Freeze image' : 'Video clip'}</span>
             <span className="ml-auto rounded-lg border border-[#d7e5f6] bg-white/80 px-3 py-2 text-[10px] font-black uppercase tracking-[0.14em] text-slate-500">Snap on</span>
@@ -2114,7 +2623,7 @@ export function VideoAnalysisTool({ onHome, onOpenBoard }: VideoAnalysisToolProp
               <div className="flex items-center gap-1">
                 <button type="button" title="Duplicate selected" onClick={duplicateSelected} disabled={!selectedAnnotation} className="grid h-8 w-8 place-items-center rounded-lg border border-[#d7e5f6] bg-white/80 text-[#0b172a] disabled:opacity-35"><Copy size={14} /></button>
                 <button type="button" title="Delete selected" onClick={deleteSelected} disabled={!selectedAnnotation} className="grid h-8 w-8 place-items-center rounded-lg bg-red-50 text-red-600 ring-1 ring-red-100 disabled:opacity-35"><Trash2 size={14} /></button>
-                <button type="button" title="Clear annotations" onClick={() => { setAnnotations([]); setSingleSelection(undefined); }} disabled={!annotations.length} className="grid h-8 w-8 place-items-center rounded-lg bg-red-600 text-white disabled:opacity-35"><Eraser size={14} /></button>
+                <button type="button" title="Clear annotations" onClick={() => { pushHistory(); setAnnotations([]); setSingleSelection(undefined); clearConnectionDraft(); }} disabled={!annotations.length} className="grid h-8 w-8 place-items-center rounded-lg bg-red-600 text-white disabled:opacity-35"><Eraser size={14} /></button>
               </div>
             </div>
             <div className="grid grid-cols-2 gap-2">
@@ -2131,7 +2640,7 @@ export function VideoAnalysisTool({ onHome, onOpenBoard }: VideoAnalysisToolProp
                 <input type="range" min="0.08" max="1" step="0.04" value={selectedAnnotation?.opacity ?? style.opacity} onChange={event => selectedAnnotation ? updateSelected({ opacity: Number(event.target.value) }) : setStyle(current => ({ ...current, opacity: Number(event.target.value) }))} className="h-9 w-full accent-[#2563eb]" />
               </label>
             </div>
-            {selectedAnnotation && (selectedAnnotation.type === 'zone' || selectedAnnotation.type === 'polygon-zone' || selectedAnnotation.type === 'circle-zone' || selectedAnnotation.type === 'highlight' || selectedAnnotation.type === 'spotlight') && <label className="dock-field mt-2 block space-y-1 text-[10px] font-black uppercase tracking-[0.14em] text-slate-500">Outline
+            {selectedAnnotation && (selectedAnnotation.type === 'zone' || selectedAnnotation.type === 'polygon-zone' || selectedAnnotation.type === 'circle-zone' || selectedAnnotation.type === 'player-circle' || selectedAnnotation.type === 'connection-line' || selectedAnnotation.type === 'highlight' || selectedAnnotation.type === 'spotlight') && <label className="dock-field mt-2 block space-y-1 text-[10px] font-black uppercase tracking-[0.14em] text-slate-500">Outline
               <input type="range" min="0" max="1" step="0.05" value={selectedAnnotation.outlineOpacity} onChange={event => updateSelected({ outlineOpacity: Number(event.target.value) })} className="h-9 w-full accent-[#2563eb]" />
             </label>}
             {selectedAnnotation && (selectedAnnotation.type === 'text' || selectedAnnotation.type === 'highlight' || selectedAnnotation.type === 'spotlight') && <label className="dock-field mt-2 block space-y-1 text-[10px] font-black uppercase tracking-[0.14em] text-slate-500">Label
@@ -2139,13 +2648,18 @@ export function VideoAnalysisTool({ onHome, onOpenBoard }: VideoAnalysisToolProp
             </label>}
             {selectedAnnotation && <div className="mt-2 grid grid-cols-2 gap-2">
               <label className="dock-field space-y-1 text-[10px] font-black uppercase tracking-[0.14em] text-slate-500">Start
-                <input type="number" min="0" max={safeTrimEnd || duration || 0} step="0.1" value={Number(selectedAnnotation.startTime.toFixed(1))} onChange={event => updateSelectedTiming({ startTime: Number(event.target.value) || 0 })} className="h-9 w-full rounded-lg border border-[#d7e5f6] bg-white/80 px-2 text-sm font-semibold normal-case tracking-normal text-[#0b172a]" />
+                <input type="number" min="0" max={compositionDuration || 0} step="0.1" value={Number(selectedAnnotation.startTime.toFixed(1))} onChange={event => updateSelectedTiming({ startTime: Number(event.target.value) || 0 })} className="h-9 w-full rounded-lg border border-[#d7e5f6] bg-white/80 px-2 text-sm font-semibold normal-case tracking-normal text-[#0b172a]" />
               </label>
               <label className="dock-field space-y-1 text-[10px] font-black uppercase tracking-[0.14em] text-slate-500">Lasts
                 <input type="number" min="0.2" max="30" step="0.1" value={Number(annotationDuration(selectedAnnotation).toFixed(1))} onChange={event => updateSelectedTiming({ endTime: selectedAnnotation.startTime + Math.max(0.2, Number(event.target.value) || 0.2) })} className="h-9 w-full rounded-lg border border-[#d7e5f6] bg-white/80 px-2 text-sm font-semibold normal-case tracking-normal text-[#0b172a]" />
               </label>
             </div>}
-            {selectedAnnotation && selectedBounds && selectedAnnotation.type !== 'text' && <div className="mt-2 grid grid-cols-2 gap-2">
+            {selectedAnnotation && <div className="mt-2 grid grid-cols-3 gap-1.5">
+              <button type="button" onClick={() => snapSelectedTiming('start')} className="h-8 rounded-lg border border-[#d7e5f6] bg-white/80 text-[10px] font-black text-[#0b172a]">Snap in</button>
+              <button type="button" onClick={() => snapSelectedTiming('end')} className="h-8 rounded-lg border border-[#d7e5f6] bg-white/80 text-[10px] font-black text-[#0b172a]">Snap out</button>
+              <button type="button" onClick={fitSelectedToCurrentSegment} disabled={!timelinePosition.segment} className="h-8 rounded-lg bg-[#0f766e] text-[10px] font-black text-white disabled:opacity-35">Fit block</button>
+            </div>}
+            {selectedAnnotation && selectedBounds && selectedAnnotation.type !== 'text' && selectedAnnotation.type !== 'connection-line' && <div className="mt-2 grid grid-cols-2 gap-2">
               <label className="dock-field space-y-1 text-[10px] font-black uppercase tracking-[0.14em] text-slate-500">Object W
                 <input type="range" min="0.02" max="0.82" step="0.01" value={clampRange(selectedBounds.x2 - selectedBounds.x1, 0.02, 0.82)} onChange={event => resizeSelected('width', Number(event.target.value))} className="h-9 w-full accent-[#2563eb]" />
               </label>
@@ -2186,8 +2700,8 @@ export function VideoAnalysisTool({ onHome, onOpenBoard }: VideoAnalysisToolProp
             </div>}
             {selectedAnnotation ? <div className="flex flex-wrap gap-1.5">
               {selectedAnnotation.keyframes.map(keyframe => {
-                const active = Math.abs(keyframe.time - currentTime) < 0.05;
-                return <button key={keyframe.id} type="button" onClick={() => selectAtTime(keyframe.time)} className={`group flex h-8 items-center gap-1 rounded-lg border px-2 text-[10px] font-black ${active ? 'border-[#2563eb] bg-[#2563eb] text-white' : 'border-[#d7e5f6] bg-white/80 text-[#0b172a]'}`}>
+                const active = Math.abs(keyframe.time - playheadTime) < 0.05;
+                return <button key={keyframe.id} type="button" onClick={() => selectAtTimeline(keyframe.time)} className={`group flex h-8 items-center gap-1 rounded-lg border px-2 text-[10px] font-black ${active ? 'border-[#2563eb] bg-[#2563eb] text-white' : 'border-[#d7e5f6] bg-white/80 text-[#0b172a]'}`}>
                 {timeLabel(keyframe.time)}
                 <span onClick={event => { event.stopPropagation(); deleteKeyframe(keyframe.id); }} className={`grid h-5 w-5 place-items-center rounded-md ${active ? 'text-white/90 hover:bg-white/15' : 'text-red-500 group-hover:bg-red-50'}`}><X size={12} /></span>
               </button>;
@@ -2206,7 +2720,7 @@ export function VideoAnalysisTool({ onHome, onOpenBoard }: VideoAnalysisToolProp
             <div className="mt-2 grid gap-1.5">
               {freezes.map(freeze => <div key={freeze.id} className="flex items-center justify-between gap-2 rounded-lg border border-[#d7e5f6] bg-white/80 px-2 py-1.5">
                 <button type="button" onClick={() => selectAtTime(freeze.time)} className="text-xs font-black text-[#0b172a]">{timeLabel(freeze.time)} / {freeze.duration}s</button>
-                <button type="button" onClick={() => setFreezes(current => current.filter(item => item.id !== freeze.id))} className="grid h-7 w-7 place-items-center rounded-lg bg-red-50 text-red-600"><Trash2 size={13} /></button>
+                <button type="button" onClick={() => { pushHistory(); setFreezes(current => current.filter(item => item.id !== freeze.id)); }} className="grid h-7 w-7 place-items-center rounded-lg bg-red-50 text-red-600"><Trash2 size={13} /></button>
               </div>)}
               {!freezes.length && <div className="rounded-lg border border-dashed border-[#d7e5f6] bg-white/70 px-3 py-4 text-center text-xs font-semibold text-slate-500">No freezes yet.</div>}
             </div>
