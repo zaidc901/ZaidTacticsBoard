@@ -1,5 +1,5 @@
 import { RefObject, useMemo, useRef, useState, useEffect } from 'react';
-import { Copy, Home, Mail, Share2, X } from 'lucide-react';
+import { Copy, Home, Mail, Share2, Video, X } from 'lucide-react';
 import { Stage, Layer, Rect, Line, Circle, Text, Group, Arrow, Image as KonvaImage } from 'react-konva';
 import Konva from 'konva';
 import { flagImageUrlByPresetId, teamPresetById } from '../data/teamPresets';
@@ -1076,7 +1076,7 @@ function ManagedBoardHitTargets({ players, ball, drawings, mapper }: { players: 
   </>;
 }
 
-export function PitchCanvas({ stageRef, onHome }: { stageRef: RefObject<Konva.Stage | null>; onHome?: () => void }) {
+export function PitchCanvas({ stageRef, onHome, onOpenVideo }: { stageRef: RefObject<Konva.Stage | null>; onHome?: () => void; onOpenVideo?: () => void }) {
   const { project, selectedIds, tool, toolStyle, viewZoom, dockPosition, playbackFrame, playing, addDrawing, placePlayer, select, toggleSelection, setSelection, checkpointHistory, moveSelectedItems, commitDrawingUpdate, setPlayerStarter, setTool, setDockTab, setDockPosition } = useTacticsStore();
   const [draft, setDraft] = useState<{ id: string; start: number[]; current: number[] } | null>(null);
   const [selection, setSelectionBox] = useState<{ start: number[]; current: number[] } | null>(null);
@@ -1416,6 +1416,10 @@ export function PitchCanvas({ stageRef, onHome }: { stageRef: RefObject<Konva.St
       <div className="relative flex shrink-0 items-center gap-1.5">
         {onHome && <button type="button" aria-label="Studio home" title="Studio home" onClick={onHome} className={`grid h-9 w-9 place-items-center rounded-lg border transition ${dark ? 'border-slate-700 bg-slate-950/70 text-slate-100 hover:border-slate-500 hover:bg-slate-900' : 'border-[#d7e5f6] bg-white/80 text-[#0b172a] hover:border-[#2563eb] hover:bg-white'}`}>
           <Home size={14} />
+        </button>}
+        {onOpenVideo && <button type="button" aria-label="Open video analysis" title="Video analysis" onClick={onOpenVideo} className={`flex h-9 items-center gap-1.5 rounded-lg border px-2.5 text-xs font-black transition ${dark ? 'border-slate-700 bg-slate-950/70 text-slate-100 hover:border-slate-500 hover:bg-slate-900' : 'border-[#d7e5f6] bg-white/80 text-[#0b172a] hover:border-[#2563eb] hover:bg-white'}`}>
+          <Video size={14} />
+          <span className="hidden sm:inline">Video</span>
         </button>}
         <button type="button" aria-label="Share tactics board" onClick={() => void shareBoard()} className={`flex h-9 items-center gap-1.5 rounded-lg border px-2.5 text-xs font-black transition ${dark ? 'border-slate-700 bg-slate-950/70 text-slate-100 hover:border-slate-500 hover:bg-slate-900' : 'border-[#d7e5f6] bg-white/80 text-[#0b172a] hover:border-[#2563eb] hover:bg-white'}`}>
           <Share2 size={14} />

@@ -183,19 +183,23 @@ export default function App() {
       .finally(() => useTacticsStore.getState().clearPlaybackFrame());
   }, [playScenes]);
 
-  if (mode === 'home') return <StudioHome onOpenBoard={() => openMode('board')} onOpenVideo={() => openMode('video')} />;
-
-  if (mode === 'video') return <VideoAnalysisTool onHome={() => openMode('home')} onOpenBoard={() => openMode('board')} />;
-
-  return <div className={`tactics-shell flex h-screen h-[100dvh] overflow-hidden ${dockPosition === 'right' ? 'flex-row' : 'flex-col'} ${dark ? 'tactics-dark bg-slate-950 text-slate-100' : 'bg-[#f6f9ff] text-[#0b172a]'}`}>
-    <main className="relative min-h-0 min-w-0 flex-1 overflow-hidden">
-      <PitchCanvas stageRef={stageRef} onHome={() => openMode('home')} />
-      {dockPosition === 'hidden' && <div className="pointer-events-none absolute bottom-3 left-1/2 z-40 flex max-w-[calc(100%-1.5rem)] -translate-x-1/2 flex-wrap items-center justify-center gap-2">
-        <DockModeSwitcher />
-        <PitchScaleControl />
-        <QuickActions />
-      </div>}
-    </main>
-    {dockPosition !== 'hidden' && <ControlDock onExportImage={exportImage} onPreviewAnimation={() => { void playScenes(); }} onExportVideo={exportVideo} />}
+  return <div className="relative h-screen h-[100dvh] overflow-hidden">
+    <div className={mode === 'home' ? 'absolute inset-0' : 'hidden'}>
+      <StudioHome onOpenBoard={() => openMode('board')} onOpenVideo={() => openMode('video')} />
+    </div>
+    <div className={mode === 'video' ? 'absolute inset-0' : 'hidden'}>
+      <VideoAnalysisTool active={mode === 'video'} onHome={() => openMode('home')} onOpenBoard={() => openMode('board')} />
+    </div>
+    <div className={`tactics-shell h-full w-full overflow-hidden ${mode === 'board' ? 'flex' : 'hidden'} ${dockPosition === 'right' ? 'flex-row' : 'flex-col'} ${dark ? 'tactics-dark bg-slate-950 text-slate-100' : 'bg-[#f6f9ff] text-[#0b172a]'}`}>
+      <main className="relative min-h-0 min-w-0 flex-1 overflow-hidden">
+        <PitchCanvas stageRef={stageRef} onHome={() => openMode('home')} onOpenVideo={() => openMode('video')} />
+        {dockPosition === 'hidden' && <div className="pointer-events-none absolute bottom-3 left-1/2 z-40 flex max-w-[calc(100%-1.5rem)] -translate-x-1/2 flex-wrap items-center justify-center gap-2">
+          <DockModeSwitcher />
+          <PitchScaleControl />
+          <QuickActions />
+        </div>}
+      </main>
+      {dockPosition !== 'hidden' && <ControlDock onExportImage={exportImage} onPreviewAnimation={() => { void playScenes(); }} onExportVideo={exportVideo} />}
+    </div>
   </div>;
 }

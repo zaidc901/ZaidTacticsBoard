@@ -163,9 +163,11 @@ input[type='color'] { min-height: 2.25rem; border-radius: .75rem; border: 1px so
 .video-analysis-shell.video-dark .bg-white\/82,
 .video-analysis-shell.video-dark .bg-white\/88,
 .video-analysis-shell.video-dark .bg-white\/95,
+.video-analysis-shell.video-dark .bg-white\/96,
 .video-analysis-shell.video-dark .bg-white\/80,
 .video-analysis-shell.video-dark .bg-white\/86,
 .video-analysis-shell.video-dark .bg-white\/70,
+.video-analysis-shell.video-dark .bg-\[\#edf4fc\],
 .video-analysis-shell.video-dark .bg-\[\#f8fbff\] {
   background-color: rgba(15, 23, 42, .86) !important;
   border-color: #334155 !important;
@@ -201,6 +203,25 @@ input[type='color'] { min-height: 2.25rem; border-radius: .75rem; border: 1px so
     radial-gradient(circle at 18% 12%, rgba(37,99,235,.24), transparent 32%),
     linear-gradient(135deg, #020617, #0b1220 48%, #101827) !important;
   background-size: 70px 70px, 70px 70px, auto, auto !important;
+}
+.video-analysis-shell aside.dock-shell {
+  overscroll-behavior: contain;
+}
+
+@media (max-width: 1023px) {
+  .video-analysis-shell aside.dock-shell {
+    min-height: 0;
+  }
+}
+
+@media (max-width: 640px) {
+  .video-analysis-shell .video-analysis-header {
+    padding-left: .5rem;
+    padding-right: .5rem;
+  }
+  .video-analysis-shell .dock-panel {
+    border-radius: 10px !important;
+  }
 }
 
 @media (max-height: 700px) {
