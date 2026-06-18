@@ -503,6 +503,7 @@ function PresetTeamsPanel() {
     </div>
     {!collectionId && <div className="rounded-lg border border-dashed border-[#d7e5f6] bg-white/60 px-3 py-4 text-sm font-semibold text-slate-500">Choose a preset pack to show teams.</div>}
     {collectionId && visiblePresets.length === 0 && <div className="rounded-lg border border-dashed border-[#d7e5f6] bg-white/60 px-3 py-4 text-sm font-semibold text-slate-500">This preset pack is ready in the menu structure; teams can be loaded into it next.</div>}
+    {collectionId === 'world-cup-2026' && <p className="rounded-lg border border-[#d7e5f6] bg-white/70 px-3 py-2 text-xs font-bold text-slate-600">Preset starting 11s are based on the first World Cup games.</p>}
     <div className="dock-preset-grid grid max-h-44 gap-1.5 overflow-y-auto pr-1 sm:grid-cols-4 lg:grid-cols-7 xl:grid-cols-10">
       {visiblePresets.map(preset => <button key={preset.id} disabled={playing || !selectedTeamId} onClick={() => void applyOfflinePreset(preset)} title={`Load ${preset.name}`} className="group relative min-h-20 overflow-hidden rounded-lg border border-[#d7e5f6] bg-white/80 text-left shadow-[0_10px_24px_rgba(37,99,235,.08)] transition hover:-translate-y-0.5 hover:border-[#2563eb] disabled:opacity-45">
         <span className="absolute inset-0" style={{ background: flagBackground(preset) }} />
