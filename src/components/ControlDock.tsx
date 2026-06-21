@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { AlertTriangle, BadgeHelp, Circle as CircleIcon, CircleDot, Copy, Download, Eraser, Eye, EyeOff, Film, Frown, ImageDown, ImagePlus, Link2, Minus, Moon, MousePointer2, MoveHorizontal, MoveRight, MoveVertical, Palette, PanelBottom, PanelRight, Pencil, Play, Plus, Redo2, RotateCcw, Route, Settings2, Shield, SlidersHorizontal, Square, Trash2, Type, Undo2, Unlink2, UserMinus, UsersRound } from 'lucide-react';
+import { AlertTriangle, BadgeHelp, Circle as CircleIcon, CircleDot, Copy, Download, Eraser, Eye, EyeOff, Film, Frown, ImageDown, ImagePlus, Link2, Minus, MousePointer2, MoveHorizontal, MoveRight, MoveVertical, Palette, PanelBottom, PanelRight, Pencil, Play, Plus, Redo2, RotateCcw, Route, Settings2, Shield, SlidersHorizontal, Square, Trash2, Type, Undo2, Unlink2, UserMinus, UsersRound } from 'lucide-react';
 import { formations, FormationKey } from '../data/formations';
 import { flagImageUrlByPresetId, presetCollections, PresetCollectionId, teamPresetById, teamPresets, TeamPreset } from '../data/teamPresets';
 import { useTacticsStore } from '../store/tacticsStore';
@@ -339,7 +339,6 @@ function PagePanel() {
   const dark = project.settings.theme === 'dark';
   const pitchScaleX = project.settings.pitchScaleX ?? 1;
   const pitchScaleY = project.settings.pitchScaleY ?? 1;
-  const toggleDark = () => updateSettings({ theme: dark ? 'portfolio-light' : 'dark', backgroundColor: dark ? '#edf6ff' : '#111827', grassColor: dark ? '#73ad7a' : '#315f43', lineColor: dark ? '#f8fbff' : '#dbeafe' });
   const resetBoard = () => {
     resetElevenAside();
     setViewZoom(1.08);
@@ -369,9 +368,6 @@ function PagePanel() {
           <button title="Pep zones" onClick={() => updateSettings({ pepZones: !project.settings.pepZones })} className={`h-8 rounded-lg border px-2 text-[10px] font-black ${project.settings.pepZones ? 'border-[#2563eb] bg-[#2563eb] text-white' : 'border-[#d7e5f6] bg-white/80 text-[#0b172a] hover:border-[#2563eb]'}`}>Zones</button>
           <button title="Restore both teams to the default 11 circle markers" onClick={resetBoard} className="flex h-8 items-center gap-1 rounded-lg border border-[#d7e5f6] bg-white/80 px-2 text-[10px] font-black text-[#0b172a] hover:border-[#2563eb]">
             <RotateCcw size={12} /> Reset 11
-          </button>
-          <button title="Toggle dark mode" onClick={toggleDark} className={`grid h-8 w-8 place-items-center rounded-lg border ${dark ? 'border-[#60a5fa] bg-[#60a5fa] text-[#0b172a]' : 'border-[#d7e5f6] bg-white/80 text-[#0b172a] hover:border-[#2563eb]'}`}>
-            <Moon size={14} />
           </button>
         </div>
       </div>

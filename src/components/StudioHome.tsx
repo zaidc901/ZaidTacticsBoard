@@ -1,4 +1,4 @@
-import { ArrowRight, Film, PenTool, Video } from 'lucide-react';
+import { AlertTriangle, ArrowRight, Film, PenTool, Video } from 'lucide-react';
 
 type StudioHomeProps = {
   onOpenBoard: () => void;
@@ -32,13 +32,18 @@ export function StudioHome({ onOpenBoard, onOpenVideo }: StudioHomeProps) {
           </button>
 
           <button type="button" onClick={onOpenVideo} className="group min-h-[18rem] rounded-2xl border border-slate-700 bg-slate-900/82 p-5 text-left shadow-[0_20px_58px_rgba(2,6,23,.24)] backdrop-blur transition hover:-translate-y-1 hover:border-[#2dd4bf] hover:bg-slate-900 sm:p-6">
-            <span className="mb-5 grid h-14 w-14 place-items-center rounded-xl bg-[#0f766e] text-white shadow-[0_14px_30px_rgba(15,118,110,.22)]">
-              <Video size={27} />
+            <span className="mb-5 flex items-start justify-between gap-3">
+              <span className="grid h-14 w-14 place-items-center rounded-xl bg-[#0f766e] text-white shadow-[0_14px_30px_rgba(15,118,110,.22)]">
+                <Video size={27} />
+              </span>
+              <span className="inline-flex h-8 items-center gap-1.5 rounded-lg border border-amber-300/40 bg-amber-300/12 px-2.5 text-[10px] font-black uppercase tracking-[0.14em] text-amber-100">
+                <AlertTriangle size={13} /> WIP
+              </span>
             </span>
             <span className="block text-2xl font-black tracking-normal text-white">Video Analysis</span>
-            <span className="mt-3 block max-w-md text-sm font-semibold leading-6 text-slate-400">Upload match clips, draw analyst overlays, freeze frames, keyframe movement, and export the result.</span>
+            <span className="mt-3 block max-w-md text-sm font-semibold leading-6 text-slate-400">Early preview for match clips, analyst overlays, freeze frames, keyframes, and export. It is not final yet, so bugs and rough edges are expected.</span>
             <span className="mt-6 inline-flex h-10 items-center gap-2 rounded-lg bg-[#0f766e] px-4 text-sm font-black text-white transition group-hover:bg-[#0d9488]">
-              Open video tool <Film size={16} />
+              Open WIP tool <Film size={16} />
             </span>
           </button>
         </section>

@@ -1,5 +1,5 @@
 import { RefObject, useMemo, useRef, useState, useEffect } from 'react';
-import { Copy, Home, Mail, Share2, Video, X } from 'lucide-react';
+import { Copy, Home, Mail, Moon, Share2, Sun, Video, X } from 'lucide-react';
 import { Stage, Layer, Rect, Line, Circle, Text, Group, Arrow, Image as KonvaImage } from 'react-konva';
 import Konva from 'konva';
 import { flagImageUrlByPresetId, teamPresetById } from '../data/teamPresets';
@@ -1077,7 +1077,7 @@ function ManagedBoardHitTargets({ players, ball, drawings, mapper }: { players: 
 }
 
 export function PitchCanvas({ stageRef, onHome, onOpenVideo }: { stageRef: RefObject<Konva.Stage | null>; onHome?: () => void; onOpenVideo?: () => void }) {
-  const { project, selectedIds, tool, toolStyle, viewZoom, dockPosition, playbackFrame, playing, addDrawing, placePlayer, select, toggleSelection, setSelection, checkpointHistory, moveSelectedItems, commitDrawingUpdate, setPlayerStarter, setTool, setDockTab, setDockPosition } = useTacticsStore();
+  const { project, selectedIds, tool, toolStyle, viewZoom, dockPosition, playbackFrame, playing, addDrawing, placePlayer, select, toggleSelection, setSelection, checkpointHistory, moveSelectedItems, commitDrawingUpdate, setPlayerStarter, setTool, setDockTab, setDockPosition, updateSettings } = useTacticsStore();
   const [draft, setDraft] = useState<{ id: string; start: number[]; current: number[] } | null>(null);
   const [selection, setSelectionBox] = useState<{ start: number[]; current: number[] } | null>(null);
   const [boardDragPreview, setBoardDragPreview] = useState<BoardDragPreview | null>(null);
@@ -1403,6 +1403,12 @@ export function PitchCanvas({ stageRef, onHome, onOpenVideo }: { stageRef: RefOb
       setEmailCopied(false);
     }
   };
+  const toggleTheme = () => updateSettings({
+    theme: dark ? 'portfolio-light' : 'dark',
+    backgroundColor: dark ? '#edf6ff' : '#111827',
+    grassColor: dark ? '#73ad7a' : '#315f43',
+    lineColor: dark ? '#f8fbff' : '#dbeafe',
+  });
 
   return <div className={`relative flex h-full w-full flex-col overflow-hidden bg-[size:70px_70px,70px_70px,auto,auto] ${dark ? 'bg-[linear-gradient(90deg,rgba(96,165,250,.07)_1px,transparent_1px),linear-gradient(0deg,rgba(96,165,250,.07)_1px,transparent_1px),radial-gradient(circle_at_18%_12%,rgba(37,99,235,.26),transparent_32%),linear-gradient(135deg,#020617,#0f172a_48%,#111827)]' : 'bg-[linear-gradient(90deg,rgba(37,99,235,.035)_1px,transparent_1px),linear-gradient(0deg,rgba(37,99,235,.035)_1px,transparent_1px),radial-gradient(circle_at_18%_12%,#dbeafe,transparent_32%),linear-gradient(135deg,#f6f9ff,#eef7ff_48%,#fbfbf4)]'}`}>
     <header className={`relative z-20 flex h-14 shrink-0 items-center justify-between gap-3 border-b px-3 backdrop-blur-xl sm:px-4 ${dark ? 'border-slate-800/80 bg-slate-950/60' : 'border-white/70 bg-white/60'}`}>
@@ -1421,6 +1427,9 @@ export function PitchCanvas({ stageRef, onHome, onOpenVideo }: { stageRef: RefOb
           <Video size={14} />
           <span className="hidden sm:inline">Video</span>
         </button>}
+        <button type="button" aria-label={dark ? 'Switch to light mode' : 'Switch to dark mode'} title={dark ? 'Switch to light mode' : 'Switch to dark mode'} onClick={toggleTheme} className={`grid h-9 w-9 place-items-center rounded-lg border transition ${dark ? 'border-slate-700 bg-slate-950/70 text-slate-100 hover:border-slate-500 hover:bg-slate-900' : 'border-[#d7e5f6] bg-white/80 text-[#0b172a] hover:border-[#2563eb] hover:bg-white'}`}>
+          {dark ? <Sun size={15} /> : <Moon size={15} />}
+        </button>
         <button type="button" aria-label="Share tactics board" onClick={() => void shareBoard()} className={`flex h-9 items-center gap-1.5 rounded-lg border px-2.5 text-xs font-black transition ${dark ? 'border-slate-700 bg-slate-950/70 text-slate-100 hover:border-slate-500 hover:bg-slate-900' : 'border-[#d7e5f6] bg-white/80 text-[#0b172a] hover:border-[#2563eb] hover:bg-white'}`}>
           <Share2 size={14} />
           <span className="hidden sm:inline">{shareDone ? 'Copied' : 'Share'}</span>
