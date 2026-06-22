@@ -3,6 +3,7 @@ import { Copy, Home, Mail, Moon, Share2, Sun, Video, X } from 'lucide-react';
 import { Stage, Layer, Rect, Line, Circle, Text, Group, Arrow, Image as KonvaImage } from 'react-konva';
 import Konva from 'konva';
 import { flagImageUrlByPresetId, teamPresetById } from '../data/teamPresets';
+import { useMediaQuery } from '../hooks/useMediaQuery';
 import { useTacticsStore } from '../store/tacticsStore';
 import { Ball, BallDesign, Drawing, FillPattern, PlaybackDrawing, Player, Team, ToolStyle } from '../types/domain';
 
@@ -310,7 +311,7 @@ function BenchTray({ team, side, fieldPlayerDrag, onReceivePlayers }: { team: Te
       event.stopPropagation();
       onReceivePlayers(team.id);
     }}
-    className={`pointer-events-auto absolute top-[4.25rem] z-30 flex max-h-[calc(100%-5rem)] w-[4.5rem] flex-col overflow-hidden rounded-xl border bg-white/88 shadow-[0_12px_34px_rgba(11,23,42,.18)] backdrop-blur-md transition sm:w-24 ${receiving ? 'scale-[1.04] border-[#06b6d4] ring-4 ring-[#22d3ee]/30' : 'border-white/70'} ${sideClass}`}
+    className={`bench-tray bench-tray-${side} pointer-events-auto absolute top-[4.25rem] z-30 flex max-h-[calc(100%-5rem)] w-[4.5rem] flex-col overflow-hidden rounded-xl border bg-white/88 shadow-[0_12px_34px_rgba(11,23,42,.18)] backdrop-blur-md transition sm:w-24 ${receiving ? 'scale-[1.04] border-[#06b6d4] ring-4 ring-[#22d3ee]/30' : 'border-white/70'} ${sideClass}`}
   >
     <div className="shrink-0 border-b border-[#d7e5f6] px-1.5 py-2 text-center">
       <span className="mx-auto mb-1 block h-1.5 w-8 rounded-full" style={{ backgroundColor: team.primaryColor }} />
@@ -1093,17 +1094,23 @@ export function PitchCanvas({ stageRef, onHome, onOpenVideo }: { stageRef: RefOb
   const { ref: containerRef, size } = useElementSize<HTMLDivElement>();
   const { width, height, format } = project.settings;
   const dark = project.settings.theme === 'dark';
+  const touchCanvas = useMediaQuery('(pointer: coarse), (max-width: 767px)');
+  const compactCanvas = useMediaQuery('(max-width: 640px)');
   const pitchScaleX = project.settings.pitchScaleX ?? 1;
   const pitchScaleY = project.settings.pitchScaleY ?? 1;
   const mapper = useMemo(() => makeMapper(width, height, pitchScaleX, pitchScaleY, format === 'landscape'), [format, height, pitchScaleX, pitchScaleY, width]);
   const scale = useMemo(() => {
-    const usableWidth = Math.max(320, size.width - 44);
-    const usableHeight = Math.max(320, size.height - 44);
+    const edgePadding = compactCanvas ? 12 : touchCanvas ? 20 : 44;
+    const usableWidth = Math.max(240, size.width - edgePadding);
+    const usableHeight = Math.max(220, size.height - edgePadding);
     const fitContain = Math.min(usableWidth / width, usableHeight / height);
     const widthFit = usableWidth / width;
-    const base = format === 'portrait' ? widthFit * 0.64 : fitContain * 1.3;
-    return clampRange(base * viewZoom, 0.16, 1.75);
-  }, [format, height, size.height, size.width, viewZoom, width]);
+    const effectiveZoom = touchCanvas ? viewZoom : Math.min(viewZoom, 1.35);
+    const base = format === 'portrait'
+      ? touchCanvas ? Math.min(widthFit * 1.08, fitContain * 1.42) : widthFit * 0.64
+      : fitContain * (touchCanvas ? 1.18 : 1.3);
+    return clampRange(base * effectiveZoom, 0.16, touchCanvas ? 2.6 : 1.75);
+  }, [compactCanvas, format, height, size.height, size.width, touchCanvas, viewZoom, width]);
 
   const pointerRel = (stage: Konva.Stage) => {
     const p = stage.getPointerPosition() ?? { x: 0, y: 0 };
@@ -1456,9 +1463,9 @@ export function PitchCanvas({ stageRef, onHome, onOpenVideo }: { stageRef: RefOb
     </header>
     {project.teams[0] && <BenchTray team={project.teams[0]} side="left" fieldPlayerDrag={fieldPlayerDrag} onReceivePlayers={receivePlayersOnBench} />}
     {project.teams[1] && <BenchTray team={project.teams[1]} side="right" fieldPlayerDrag={fieldPlayerDrag} onReceivePlayers={receivePlayersOnBench} />}
-    <div ref={containerRef} onDragOver={e => e.preventDefault()} onDrop={dropPlayer} className="relative min-h-0 flex-1 overflow-auto">
-      <div className="relative z-10 grid min-h-full min-w-full place-items-center p-3 sm:p-4">
-        <div className="relative shrink-0" style={{ width: width * scale, height: height * scale }}>
+    <div ref={containerRef} onDragOver={e => e.preventDefault()} onDrop={dropPlayer} className="relative min-h-0 flex-1 overflow-auto overscroll-contain">
+      <div className="relative z-10 grid min-h-full min-w-full place-items-center p-2 sm:p-4">
+        <div className="board-stage-wrap relative shrink-0 touch-none" style={{ width: width * scale, height: height * scale }}>
           <Stage ref={stageRef} width={width * scale} height={height * scale} scale={{ x: scale, y: scale }}
           onMouseDown={(e) => {
             const stage = e.target.getStage();

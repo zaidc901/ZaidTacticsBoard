@@ -4,6 +4,7 @@ import { ControlDock, DockModeSwitcher, PitchScaleControl, QuickActions } from '
 import { PitchCanvas } from './components/PitchCanvas';
 import { StudioHome } from './components/StudioHome';
 import { VideoAnalysisTool } from './components/VideoAnalysisTool';
+import { useMediaQuery } from './hooks/useMediaQuery';
 import { useTacticsStore } from './store/tacticsStore';
 import { Drawing, ExportRegion, PlaybackDrawing, PlaybackFrame, Scene } from './types/domain';
 import { exportStageImage, recordStageAnimation } from './utils/exporters';
@@ -132,6 +133,9 @@ export default function App() {
   const [mode, setMode] = useState<AppMode>(() => modeFromHash());
   const dark = useTacticsStore(s => s.project.settings.theme === 'dark');
   const dockPosition = useTacticsStore(s => s.dockPosition);
+  const touchLayout = useMediaQuery('(pointer: coarse), (max-width: 767px)');
+  const forceBottomDock = touchLayout;
+  const effectiveDockPosition = dockPosition === 'right' && forceBottomDock ? 'bottom' : dockPosition;
 
   useEffect(() => {
     const syncMode = () => setMode(modeFromHash());
@@ -190,16 +194,16 @@ export default function App() {
     <div className={mode === 'video' ? 'absolute inset-0' : 'hidden'}>
       <VideoAnalysisTool active={mode === 'video'} onHome={() => openMode('home')} onOpenBoard={() => openMode('board')} />
     </div>
-    <div className={`tactics-shell h-full w-full overflow-hidden ${mode === 'board' ? 'flex' : 'hidden'} ${dockPosition === 'right' ? 'flex-row' : 'flex-col'} ${dark ? 'tactics-dark bg-slate-950 text-slate-100' : 'bg-[#f6f9ff] text-[#0b172a]'}`}>
+    <div className={`tactics-shell h-full w-full overflow-hidden ${mode === 'board' ? 'flex' : 'hidden'} ${effectiveDockPosition === 'right' ? 'flex-row' : 'flex-col'} ${touchLayout ? 'tactics-touch' : ''} ${dark ? 'tactics-dark bg-slate-950 text-slate-100' : 'bg-[#f6f9ff] text-[#0b172a]'}`}>
       <main className="relative min-h-0 min-w-0 flex-1 overflow-hidden">
         <PitchCanvas stageRef={stageRef} onHome={() => openMode('home')} onOpenVideo={() => openMode('video')} />
-        {dockPosition === 'hidden' && <div className="pointer-events-none absolute bottom-3 left-1/2 z-40 flex max-w-[calc(100%-1.5rem)] -translate-x-1/2 flex-wrap items-center justify-center gap-2">
+        {effectiveDockPosition === 'hidden' && <div className="pointer-events-none absolute bottom-3 left-1/2 z-40 flex max-w-[calc(100%-1.5rem)] -translate-x-1/2 flex-wrap items-center justify-center gap-2">
           <DockModeSwitcher />
           <PitchScaleControl />
           <QuickActions />
         </div>}
       </main>
-      {dockPosition !== 'hidden' && <ControlDock onExportImage={exportImage} onPreviewAnimation={() => { void playScenes(); }} onExportVideo={exportVideo} />}
+      {effectiveDockPosition !== 'hidden' && <ControlDock forceBottomDock={forceBottomDock} onExportImage={exportImage} onPreviewAnimation={() => { void playScenes(); }} onExportVideo={exportVideo} />}
     </div>
   </div>;
 }

@@ -208,13 +208,89 @@ input[type='color'] { min-height: 2.25rem; border-radius: .75rem; border: 1px so
   overscroll-behavior: contain;
 }
 
-@media (max-width: 1023px) {
+.board-stage-wrap,
+.video-canvas-area canvas {
+  touch-action: none;
+}
+
+.tactics-touch .dock-bottom {
+  height: clamp(300px, 42dvh, 420px) !important;
+}
+.tactics-touch .dock-command-row,
+.tactics-touch .dock-tool-row {
+  height: 3.25rem !important;
+}
+.tactics-touch .dock-content {
+  padding: .65rem;
+}
+.tactics-touch .dock-panel {
+  padding: .75rem !important;
+}
+.tactics-touch .dock-shell button,
+.tactics-touch .dock-shell input:not([type='range']):not([type='color']),
+.tactics-touch .dock-shell select {
+  min-height: 2.5rem;
+}
+.tactics-touch .dock-preset-grid {
+  grid-template-columns: repeat(auto-fit, minmax(7rem, 1fr)) !important;
+  max-height: none;
+}
+
+@media (max-width: 1023px), (pointer: coarse) {
   .video-analysis-shell aside.dock-shell {
     min-height: 0;
+  }
+  .video-touch main {
+    grid-template-rows: minmax(34rem, auto) minmax(20rem, auto);
+  }
+  .video-touch .video-canvas-area {
+    min-height: 34rem;
   }
 }
 
 @media (max-width: 640px) {
+  .tactics-touch .dock-bottom,
+  .dock-bottom {
+    height: clamp(280px, 40dvh, 360px) !important;
+  }
+  .dock-command-row {
+    scrollbar-width: none;
+  }
+  .dock-command-row::-webkit-scrollbar {
+    display: none;
+  }
+  .bench-tray {
+    left: .5rem !important;
+    right: .5rem !important;
+    top: auto !important;
+    bottom: .55rem;
+    width: auto !important;
+    height: 4.1rem;
+    max-height: 4.1rem !important;
+    flex-direction: row !important;
+  }
+  .bench-tray-right {
+    bottom: 4.95rem;
+  }
+  .bench-tray > div:first-child {
+    width: 4.4rem;
+    border-right: 1px solid #d7e5f6;
+    border-bottom: 0;
+    padding: .45rem .35rem;
+  }
+  .bench-tray > div:last-child {
+    display: flex;
+    min-width: 0;
+    flex: 1;
+    gap: .4rem;
+    overflow-x: auto;
+    overflow-y: hidden;
+    padding: .4rem;
+  }
+  .bench-tray button {
+    min-width: 3.35rem;
+    min-height: 3.2rem;
+  }
   .video-analysis-shell .video-analysis-header {
     padding-left: .5rem;
     padding-right: .5rem;
@@ -224,6 +300,6 @@ input[type='color'] { min-height: 2.25rem; border-radius: .75rem; border: 1px so
   }
 }
 
-@media (max-height: 700px) {
+@media (max-height: 700px) and (min-width: 641px) and (pointer: fine) {
   .dock-bottom { height: 210px !important; }
 }

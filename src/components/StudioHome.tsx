@@ -6,8 +6,8 @@ type StudioHomeProps = {
 };
 
 export function StudioHome({ onOpenBoard, onOpenVideo }: StudioHomeProps) {
-  return <div className="tactics-shell min-h-screen overflow-hidden bg-slate-950 text-slate-100">
-    <div className="relative flex min-h-screen flex-col bg-[linear-gradient(90deg,rgba(34,211,238,.06)_1px,transparent_1px),linear-gradient(0deg,rgba(96,165,250,.055)_1px,transparent_1px),radial-gradient(circle_at_18%_12%,rgba(37,99,235,.24),transparent_32%),linear-gradient(135deg,#020617,#0b1220_48%,#101827)] bg-[size:70px_70px,70px_70px,auto,auto]">
+  return <div className="tactics-shell h-full min-h-[100dvh] overflow-y-auto bg-slate-950 text-slate-100">
+    <div className="relative flex min-h-[100dvh] flex-col bg-[linear-gradient(90deg,rgba(34,211,238,.06)_1px,transparent_1px),linear-gradient(0deg,rgba(96,165,250,.055)_1px,transparent_1px),radial-gradient(circle_at_18%_12%,rgba(37,99,235,.24),transparent_32%),linear-gradient(135deg,#020617,#0b1220_48%,#101827)] bg-[size:70px_70px,70px_70px,auto,auto]">
       <header className="relative z-10 flex h-16 shrink-0 items-center justify-between border-b border-slate-800/80 bg-slate-950/60 px-4 backdrop-blur-xl sm:px-6">
         <div className="flex min-w-0 items-center gap-2.5">
           <img src="/ZTBLogo.png" alt="ZaidTacticsBoard logo" className="h-10 w-10 shrink-0 rounded-full bg-white object-cover p-0.5 shadow-[0_5px_18px_rgba(37,99,235,.28)] ring-1 ring-white/80" />
@@ -18,9 +18,9 @@ export function StudioHome({ onOpenBoard, onOpenVideo }: StudioHomeProps) {
         </div>
       </header>
 
-      <main className="relative z-10 flex flex-1 items-center justify-center px-4 py-6 sm:px-6">
+      <main className="relative z-10 flex flex-1 items-center justify-center px-3 py-4 sm:px-6 sm:py-6">
         <section className="grid w-full max-w-5xl gap-4 md:grid-cols-2">
-          <button type="button" onClick={onOpenBoard} className="group min-h-[18rem] rounded-2xl border border-slate-700 bg-slate-900/82 p-5 text-left shadow-[0_20px_58px_rgba(2,6,23,.26)] backdrop-blur transition hover:-translate-y-1 hover:border-[#60a5fa] hover:bg-slate-900 sm:p-6">
+          <button type="button" onClick={onOpenBoard} className="group min-h-[14rem] rounded-2xl border border-slate-700 bg-slate-900/82 p-4 text-left shadow-[0_20px_58px_rgba(2,6,23,.26)] backdrop-blur transition hover:-translate-y-1 hover:border-[#60a5fa] hover:bg-slate-900 sm:min-h-[18rem] sm:p-6">
             <span className="mb-5 grid h-14 w-14 place-items-center rounded-xl bg-[#2563eb] text-white shadow-[0_14px_30px_rgba(37,99,235,.24)]">
               <PenTool size={26} />
             </span>
@@ -31,7 +31,7 @@ export function StudioHome({ onOpenBoard, onOpenVideo }: StudioHomeProps) {
             </span>
           </button>
 
-          <button type="button" onClick={onOpenVideo} className="group min-h-[18rem] rounded-2xl border border-slate-700 bg-slate-900/82 p-5 text-left shadow-[0_20px_58px_rgba(2,6,23,.24)] backdrop-blur transition hover:-translate-y-1 hover:border-[#2dd4bf] hover:bg-slate-900 sm:p-6">
+          <button type="button" onClick={onOpenVideo} className="group min-h-[14rem] rounded-2xl border border-slate-700 bg-slate-900/82 p-4 text-left shadow-[0_20px_58px_rgba(2,6,23,.24)] backdrop-blur transition hover:-translate-y-1 hover:border-[#2dd4bf] hover:bg-slate-900 sm:min-h-[18rem] sm:p-6">
             <span className="mb-5 flex items-start justify-between gap-3">
               <span className="grid h-14 w-14 place-items-center rounded-xl bg-[#0f766e] text-white shadow-[0_14px_30px_rgba(15,118,110,.22)]">
                 <Video size={27} />

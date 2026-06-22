@@ -2,10 +2,12 @@ import { useEffect, useState } from 'react';
 import { AlertTriangle, BadgeHelp, Circle as CircleIcon, CircleDot, Copy, Download, Eraser, Eye, EyeOff, Film, Frown, ImageDown, ImagePlus, Link2, Minus, MousePointer2, MoveHorizontal, MoveRight, MoveVertical, Palette, PanelBottom, PanelRight, Pencil, Play, Plus, Redo2, RotateCcw, Route, Settings2, Shield, SlidersHorizontal, Square, Trash2, Type, Undo2, Unlink2, UserMinus, UsersRound } from 'lucide-react';
 import { formations, FormationKey } from '../data/formations';
 import { flagImageUrlByPresetId, presetCollections, PresetCollectionId, teamPresetById, teamPresets, TeamPreset } from '../data/teamPresets';
+import { useMediaQuery } from '../hooks/useMediaQuery';
 import { useTacticsStore } from '../store/tacticsStore';
 import { BallDesign, BoardFormat, DockTab, ExportRegion, FillPattern, Scene, Tool, ToolStyle } from '../types/domain';
 
 type ControlDockProps = {
+  forceBottomDock?: boolean;
   onExportImage: (type: 'png' | 'jpeg', region: ExportRegion) => void;
   onPreviewAnimation: () => void;
   onExportVideo: (region: ExportRegion) => void;
@@ -296,30 +298,39 @@ export function QuickActions({ embedded = false }: { embedded?: boolean } = {}) 
 export function PitchScaleControl({ embedded = false }: { embedded?: boolean } = {}) {
   const { project, viewZoom, setViewZoom } = useTacticsStore();
   const dark = project.settings.theme === 'dark';
-  const setZoom = (zoom: number) => setViewZoom(Math.max(0.35, Math.min(1.35, zoom)));
+  const touchControls = useMediaQuery('(pointer: coarse), (max-width: 767px)');
+  const maxZoom = touchControls ? 2.4 : 1.35;
+  const zoomStep = touchControls ? 0.1 : 0.05;
+  const setZoom = (zoom: number) => setViewZoom(Math.max(0.35, Math.min(maxZoom, zoom)));
+  useEffect(() => {
+    if (viewZoom > maxZoom) setViewZoom(maxZoom);
+  }, [maxZoom, setViewZoom, viewZoom]);
   const shellClass = dark ? 'border-slate-700 bg-slate-950/90 text-slate-100' : 'border-[#d7e5f6] bg-white/90 text-[#0b172a]';
   const buttonClass = dark ? 'hover:bg-slate-800' : 'hover:bg-[#eff6ff]';
+  const sliderWidthClass = touchControls ? 'w-24 sm:w-36' : embedded ? 'w-16 xl:w-24' : 'w-20 sm:w-28';
   return <div className={`pointer-events-auto flex ${embedded ? 'h-8 border-transparent bg-transparent px-0 shadow-none' : 'h-10 px-1.5 shadow-[0_12px_30px_rgba(11,23,42,.12)]'} items-center gap-1 rounded-xl border backdrop-blur ${embedded ? '' : shellClass}`}>
-    <button aria-label="Zoom pitch out" title="Zoom pitch out" onClick={() => setZoom(viewZoom - 0.05)} className={`grid h-7 w-7 place-items-center rounded-lg ${buttonClass}`}><Minus size={14} /></button>
+    <button aria-label="Zoom pitch out" title="Zoom pitch out" onClick={() => setZoom(viewZoom - zoomStep)} className={`grid h-7 w-7 place-items-center rounded-lg ${buttonClass}`}><Minus size={14} /></button>
     <label className="flex items-center gap-2" title="Pitch scale">
       <SlidersHorizontal size={14} className="text-[#2563eb]" />
-      <input aria-label="Pitch scale" type="range" min="0.35" max="1.35" step="0.01" value={viewZoom} onChange={event => setZoom(Number(event.target.value))} className={`${embedded ? 'w-16 xl:w-24' : 'w-20 sm:w-28'} accent-[#2563eb]`} />
+      <input aria-label="Pitch scale" type="range" min="0.35" max={maxZoom} step="0.01" value={Math.min(viewZoom, maxZoom)} onChange={event => setZoom(Number(event.target.value))} className={`${sliderWidthClass} accent-[#2563eb]`} />
       <span className="w-9 text-right text-[10px] font-black">{Math.round(viewZoom * 100)}%</span>
     </label>
-    <button aria-label="Zoom pitch in" title="Zoom pitch in" onClick={() => setZoom(viewZoom + 0.05)} className={`grid h-7 w-7 place-items-center rounded-lg ${buttonClass}`}><Plus size={14} /></button>
+    <button aria-label="Zoom pitch in" title="Zoom pitch in" onClick={() => setZoom(viewZoom + zoomStep)} className={`grid h-7 w-7 place-items-center rounded-lg ${buttonClass}`}><Plus size={14} /></button>
   </div>;
 }
 
 export function DockModeSwitcher({ embedded = false }: { embedded?: boolean } = {}) {
   const { project, dockPosition, setDockPosition } = useTacticsStore();
   const dark = project.settings.theme === 'dark';
+  const touchControls = useMediaQuery('(pointer: coarse), (max-width: 767px)');
+  const effectiveDockPosition = touchControls && dockPosition === 'right' ? 'bottom' : dockPosition;
   const modes = [
     { id: 'bottom' as const, label: 'Bottom menu', icon: PanelBottom },
     { id: 'right' as const, label: 'Side menu', icon: PanelRight },
     { id: 'hidden' as const, label: 'Hide menu', icon: EyeOff },
-  ];
+  ].filter(mode => !touchControls || mode.id !== 'right');
   return <div className={`pointer-events-auto flex items-center gap-1 rounded-xl border ${embedded ? 'border-transparent bg-transparent p-0 shadow-none' : `p-1 shadow-[0_12px_30px_rgba(11,23,42,.12)] ${dark ? 'border-slate-700 bg-slate-950/90' : 'border-[#d7e5f6] bg-white/90'}`} backdrop-blur`}>
-    {modes.map(({ id, label, icon: Icon }) => <button key={id} aria-label={label} aria-pressed={dockPosition === id} title={label} onClick={() => setDockPosition(id)} className={`grid h-8 w-8 place-items-center rounded-lg transition ${dockPosition === id ? 'bg-[#2563eb] text-white' : dark ? 'text-slate-300 hover:bg-slate-800' : 'text-slate-600 hover:bg-[#eff6ff]'}`}><Icon size={15} /></button>)}
+    {modes.map(({ id, label, icon: Icon }) => <button key={id} aria-label={label} aria-pressed={effectiveDockPosition === id} title={label} onClick={() => setDockPosition(id)} className={`grid h-8 w-8 place-items-center rounded-lg transition ${effectiveDockPosition === id ? 'bg-[#2563eb] text-white' : dark ? 'text-slate-300 hover:bg-slate-800' : 'text-slate-600 hover:bg-[#eff6ff]'}`}><Icon size={15} /></button>)}
   </div>;
 }
 
@@ -756,10 +767,10 @@ function ExportPanel({ onExportImage, onExportVideo }: Pick<ControlDockProps, 'o
   </div>;
 }
 
-export function ControlDock({ onExportImage, onPreviewAnimation, onExportVideo }: ControlDockProps) {
+export function ControlDock({ forceBottomDock = false, onExportImage, onPreviewAnimation, onExportVideo }: ControlDockProps) {
   const { dockTab: tab, dockPosition } = useTacticsStore();
   const dark = useTacticsStore(s => s.project.settings.theme === 'dark');
-  const side = dockPosition === 'right';
+  const side = dockPosition === 'right' && !forceBottomDock;
   return <footer className={`dock-shell ${side ? 'dock-side h-full w-[min(420px,90vw)] shrink-0 border-l' : 'dock-bottom h-[clamp(220px,27dvh,260px)] shrink-0 border-t'} min-h-0 overflow-hidden shadow-[0_-18px_60px_rgba(11,23,42,.08)] backdrop-blur ${dark ? 'border-slate-700 bg-slate-950/95' : 'border-[#d7e5f6] bg-white/95'}`}>
     <div className="mx-auto flex h-full max-w-[1680px] flex-col">
       {side ? <>
@@ -782,7 +793,7 @@ export function ControlDock({ onExportImage, onPreviewAnimation, onExportVideo }
             <DockModeSwitcher embedded />
           </div>
         </div>
-        <div className={`flex h-11 shrink-0 items-center gap-2 border-b px-2 ${dark ? 'border-slate-700' : 'border-[#d7e5f6]'}`}>
+        <div className={`dock-tool-row flex h-11 shrink-0 items-center gap-2 border-b px-2 ${dark ? 'border-slate-700' : 'border-[#d7e5f6]'}`}>
           <span className={`shrink-0 text-[9px] font-black uppercase tracking-[0.16em] ${dark ? 'text-slate-400' : 'text-slate-500'}`}>Board tools</span>
           <div className="min-w-0 flex-1 overflow-x-auto overscroll-contain py-1"><ToolRail compact /></div>
         </div>

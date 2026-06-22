@@ -2,6 +2,7 @@ import { ChangeEvent, DragEvent as ReactDragEvent, useCallback, useEffect, useMe
 import Konva from 'konva';
 import { ArrowLeft, ArrowRight, Circle as CircleIcon, Copy, Download, Eraser, Eye, EyeOff, Film, Gauge, Grid3X3, HelpCircle, Home, KeyRound, Lock, Moon, MousePointer2, MoveRight, Pause, Play, Plus, Redo2, Route, Scissors, Snowflake, Sparkles, Square, Sun, Trash2, Type, Undo2, Unlock, Upload, Video, X } from 'lucide-react';
 import { Arrow, Circle, Ellipse, Group, Layer, Line, Rect, Stage, Text } from 'react-konva';
+import { useMediaQuery } from '../hooks/useMediaQuery';
 
 type VideoTool = 'select' | 'arrow' | 'dashed-line' | 'run' | 'zone' | 'circle-zone' | 'player-circle' | 'connection-line' | 'highlight' | 'spotlight' | 'text';
 type VideoAnnotationType = Exclude<VideoTool, 'select'> | 'polygon-zone';
@@ -1759,6 +1760,7 @@ function OverlayTrackStrip({ annotations, selectedId, segments, playheadTime, on
 }
 
 export function VideoAnalysisTool({ onHome, onOpenBoard, active = true }: VideoAnalysisToolProps) {
+  const touchLayout = useMediaQuery('(pointer: coarse), (max-width: 767px)');
   const [clips, setClips] = useState<VideoClip[]>([]);
   const [currentClipId, setCurrentClipId] = useState<string>();
   const [tool, setTool] = useState<VideoTool>('select');
@@ -2509,7 +2511,7 @@ export function VideoAnalysisTool({ onHome, onOpenBoard, active = true }: VideoA
     }
   };
 
-  return <div className={`tactics-shell video-analysis-shell ${darkMode ? 'video-dark' : ''} flex h-screen h-[100dvh] flex-col overflow-hidden bg-[#f6f9ff] text-[#0b172a]`}>
+  return <div className={`tactics-shell video-analysis-shell ${touchLayout ? 'video-touch' : ''} ${darkMode ? 'video-dark' : ''} flex h-screen h-[100dvh] flex-col overflow-hidden bg-[#f6f9ff] text-[#0b172a]`}>
     <header className="video-analysis-header relative z-20 flex h-14 shrink-0 items-center justify-between gap-3 border-b border-white/70 bg-white/70 px-3 backdrop-blur-xl sm:px-4">
       <div className="flex min-w-0 items-center gap-2.5">
         <img src="/ZTBLogo.png" alt="ZaidTacticsBoard logo" className="h-9 w-9 shrink-0 rounded-full bg-white object-cover p-0.5 shadow-[0_5px_18px_rgba(37,99,235,.28)] ring-1 ring-white/80" />
@@ -2528,8 +2530,8 @@ export function VideoAnalysisTool({ onHome, onOpenBoard, active = true }: VideoA
 
     {!clips.length && <UploadPanel onFiles={addFiles} />}
 
-    {clips.length > 0 && <main className="grid min-h-0 flex-1 grid-rows-[minmax(0,1fr)_minmax(16rem,42dvh)] gap-0 overflow-hidden lg:grid-cols-[minmax(0,1fr)_390px] lg:grid-rows-1">
-      <section className="video-canvas-area relative flex min-h-0 flex-col overflow-hidden bg-[linear-gradient(90deg,rgba(37,99,235,.035)_1px,transparent_1px),linear-gradient(0deg,rgba(37,99,235,.035)_1px,transparent_1px),radial-gradient(circle_at_18%_12%,#dbeafe,transparent_32%),linear-gradient(135deg,#f6f9ff,#eef7ff_48%,#fbfbf4)] bg-[size:70px_70px,70px_70px,auto,auto]">
+    {clips.length > 0 && <main className={`grid min-h-0 flex-1 grid-rows-[minmax(30rem,auto)_minmax(18rem,auto)] gap-0 overflow-y-auto ${touchLayout ? '' : 'lg:grid-cols-[minmax(0,1fr)_390px] lg:grid-rows-1 lg:overflow-hidden'}`}>
+      <section className={`video-canvas-area relative flex min-h-[30rem] flex-col overflow-hidden bg-[linear-gradient(90deg,rgba(37,99,235,.035)_1px,transparent_1px),linear-gradient(0deg,rgba(37,99,235,.035)_1px,transparent_1px),radial-gradient(circle_at_18%_12%,#dbeafe,transparent_32%),linear-gradient(135deg,#f6f9ff,#eef7ff_48%,#fbfbf4)] bg-[size:70px_70px,70px_70px,auto,auto] ${touchLayout ? '' : 'lg:min-h-0'}`}>
         <div ref={stageWrapRef} className="relative min-h-0 flex-1 overflow-hidden p-1.5">
           <div className="grid h-full w-full place-items-center">
             <div className="relative overflow-hidden rounded-xl bg-slate-950 shadow-[0_24px_70px_rgba(11,23,42,.28)] ring-1 ring-[#d7e5f6]" style={{ width: previewViewportSize.width, height: previewViewportSize.height }}>
@@ -2542,7 +2544,7 @@ export function VideoAnalysisTool({ onHome, onOpenBoard, active = true }: VideoA
                 <button type="button" onClick={finishPolygonDraft} disabled={polygonDraft.length < 3} className="h-8 rounded-md bg-[#2563eb] px-2 text-[10px] font-black text-white disabled:opacity-45">Close area</button>
                 <button type="button" onClick={() => { setPolygonDraft([]); setPolygonHover(null); }} className="h-8 rounded-md bg-white/12 px-2 text-[10px] font-black text-white">Cancel</button>
               </div>}
-              <div className="absolute left-1/2 top-1/2" style={{ width: stageSize.width, height: stageSize.height, transform: 'translate(-50%, -50%)' }}>
+              <div className="absolute left-1/2 top-1/2 touch-none" style={{ width: stageSize.width, height: stageSize.height, transform: 'translate(-50%, -50%)' }}>
                 {currentClip && <video
                   key={currentClip.id}
                   ref={videoRef}
@@ -2726,7 +2728,7 @@ export function VideoAnalysisTool({ onHome, onOpenBoard, active = true }: VideoA
         </div>
       </section>
 
-      <aside className="dock-shell min-h-0 overflow-y-auto border-t border-[#d7e5f6] bg-white/95 shadow-[0_-18px_60px_rgba(11,23,42,.08)] backdrop-blur lg:border-l lg:border-t-0">
+      <aside className={`dock-shell min-h-0 overflow-y-auto border-t border-[#d7e5f6] bg-white/95 shadow-[0_-18px_60px_rgba(11,23,42,.08)] backdrop-blur ${touchLayout ? '' : 'lg:border-l lg:border-t-0'}`}>
         <div className="grid gap-2 p-2">
           <section className="dock-panel rounded-xl border border-[#d7e5f6] bg-white/76 p-2.5">
             <div className="flex items-center justify-between gap-2">
