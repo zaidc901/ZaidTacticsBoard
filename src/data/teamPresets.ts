@@ -1,4 +1,5 @@
 import { FormationKey } from './formations';
+import { premierLeagueTeams } from './premierLeagueSquads';
 
 export type FlagDirection = 'horizontal' | 'vertical';
 
@@ -10,16 +11,18 @@ export interface TeamPreset {
   formation: FormationKey;
   primaryColor: string;
   secondaryColor: string;
+  awayPrimaryColor?: string;
+  awaySecondaryColor?: string;
   flagBands: string[];
   flagDirection?: FlagDirection;
+  collection?: PresetCollectionId;
 }
 
-export type PresetCollectionId = 'world-cup-2026' | 'premier-league' | 'laliga';
+export type PresetCollectionId = 'world-cup-2026' | 'premier-league';
 
 export const presetCollections: { id: PresetCollectionId; label: string; description: string }[] = [
   { id: 'world-cup-2026', label: 'World Cup 2026', description: 'All 48 qualified national teams' },
-  { id: 'premier-league', label: 'Premier League', description: 'Club preset pack' },
-  { id: 'laliga', label: 'La Liga', description: 'Club preset pack' },
+  { id: 'premier-league', label: 'Premier League 2026/27', description: 'All 20 clubs with supplied squads' },
 ];
 
 export const teamPresets: TeamPreset[] = [
@@ -71,6 +74,11 @@ export const teamPresets: TeamPreset[] = [
   { id: 'sweden', name: 'Sweden', initials: 'SWE', confederation: 'UEFA', formation: '4-4-2', primaryColor: '#facc15', secondaryColor: '#1d4ed8', flagBands: ['#1d4ed8', '#facc15', '#1d4ed8'] },
   { id: 'switzerland', name: 'Switzerland', initials: 'SUI', confederation: 'UEFA', formation: '3-4-2-1', primaryColor: '#dc2626', secondaryColor: '#ffffff', flagBands: ['#dc2626', '#ffffff', '#dc2626'] },
   { id: 'turkiye', name: 'Turkiye', initials: 'TUR', confederation: 'UEFA', formation: '4-2-3-1', primaryColor: '#dc2626', secondaryColor: '#ffffff', flagBands: ['#dc2626', '#ffffff', '#dc2626'] },
+  ...premierLeagueTeams.map(team => ({
+    ...team,
+    confederation: 'Premier League',
+    collection: 'premier-league' as const,
+  })),
 ];
 
 export const teamPresetById = Object.fromEntries(teamPresets.map(preset => [preset.id, preset])) as Record<string, TeamPreset>;

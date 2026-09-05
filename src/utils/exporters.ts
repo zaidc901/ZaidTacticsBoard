@@ -1,4 +1,4 @@
-import Konva from 'konva';
+import type Konva from 'konva';
 import type { ExportRegion } from '../types/domain';
 
 export function download(filename: string, href: string) {

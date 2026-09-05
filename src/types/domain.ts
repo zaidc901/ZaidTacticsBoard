@@ -43,6 +43,14 @@ export interface Player {
   notes?: string;
 }
 
+export type KitVariant = 'home' | 'away';
+
+export interface KitColors {
+  primaryColor: string;
+  secondaryColor: string;
+  goalkeeperColor: string;
+}
+
 export interface Team {
   id: string;
   name: string;
@@ -55,6 +63,9 @@ export interface Team {
   showNumbers?: boolean;
   showNames?: boolean;
   preset?: string;
+  kitVariant?: KitVariant;
+  homeKit?: KitColors;
+  awayKit?: KitColors;
   formation: string;
   squad: Player[];
 }

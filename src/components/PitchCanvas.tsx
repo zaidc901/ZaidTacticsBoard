@@ -1,4 +1,4 @@
-import { RefObject, useMemo, useRef, useState, useEffect } from 'react';
+import { memo, RefObject, useMemo, useRef, useState, useEffect } from 'react';
 import { Copy, Home, Mail, Moon, Share2, Sun, Video, X } from 'lucide-react';
 import { Stage, Layer, Rect, Line, Circle, Text, Group, Arrow, Image as KonvaImage } from 'react-konva';
 import Konva from 'konva';
@@ -98,7 +98,8 @@ function useElementSize<T extends HTMLElement>() {
   useEffect(() => {
     if (!ref.current) return;
     const observer = new ResizeObserver(([entry]) => {
-      setSize({ width: entry.contentRect.width, height: entry.contentRect.height });
+      const next = { width: entry.contentRect.width, height: entry.contentRect.height };
+      setSize(current => current.width === next.width && current.height === next.height ? current : next);
     });
     observer.observe(ref.current);
     return () => observer.disconnect();
@@ -140,8 +141,8 @@ function GridOverlay({ mapper, landscape }: { mapper: Mapper; landscape: boolean
   if (settings.grid === 'none') return null;
   const { x, y, width, height } = mapper.pitch;
   const dark = settings.theme === 'dark';
-  const stroke = dark ? '#93c5fd' : '#1d4ed8';
-  const strongStroke = dark ? '#dbeafe' : '#0b172a';
+  const stroke = dark ? '#a7f3d0' : '#0f766e';
+  const strongStroke = dark ? '#ecfdf5' : '#173b27';
   const lanes = [0, 0.18, 0.34, 0.66, 0.82, 1];
   const bands = [0, 1 / 3, 2 / 3, 1];
   const showLanes = settings.grid === 'five-lanes' || settings.grid === 'fifteen' || settings.grid === 'custom';
@@ -185,18 +186,18 @@ function Pitch({ width, height, mapper }: { width: number; height: number; mappe
       fillLinearGradientStartPoint={{ x: 0, y: 0 }}
       fillLinearGradientEndPoint={{ x: width, y: height }}
       fillLinearGradientColorStops={dark
-        ? [0, '#050b16', 0.46, '#101c31', 0.76, '#0b2440', 1, '#07111f']
-        : [0, '#0b1526', 0.42, '#16253c', 0.74, '#123354', 1, '#0a1729']}
-      stroke={dark ? '#1e3a5f' : '#31577d'}
+        ? [0, '#04130b', 0.46, '#0a2113', 0.76, '#0d2d1a', 1, '#06170e']
+        : [0, '#0d2416', 0.42, '#173d25', 0.74, '#1b4b2d', 1, '#102719']}
+      stroke={dark ? '#1f5c39' : '#3f7b55'}
       strokeWidth={2}
       shadowColor="#020617"
       shadowBlur={36}
       shadowOpacity={dark ? 0.38 : 0.25}
     />
-    <Circle x={width * 0.12} y={height * 0.1} radius={Math.max(width, height) * 0.24} fill="#2563eb" opacity={dark ? 0.06 : 0.09} />
-    <Circle x={width * 0.9} y={height * 0.88} radius={Math.max(width, height) * 0.2} fill="#0ea5e9" opacity={dark ? 0.045 : 0.07} />
-    <Rect x={18} y={18} width={width - 36} height={height - 36} cornerRadius={27} stroke="#60a5fa" strokeWidth={1} opacity={dark ? 0.16 : 0.24} />
-    <Rect x={x} y={y} width={pw} height={ph} fill={settings.grassColor} shadowBlur={34} shadowColor={settings.theme === 'dark' ? '#020617' : '#8fb3da'} shadowOpacity={settings.theme === 'dark' ? 0.3 : 0.18} />
+    <Circle x={width * 0.12} y={height * 0.1} radius={Math.max(width, height) * 0.24} fill="#34d399" opacity={dark ? 0.055 : 0.08} />
+    <Circle x={width * 0.9} y={height * 0.88} radius={Math.max(width, height) * 0.2} fill="#fbbf24" opacity={dark ? 0.035 : 0.05} />
+    <Rect x={18} y={18} width={width - 36} height={height - 36} cornerRadius={27} stroke="#86efac" strokeWidth={1} opacity={dark ? 0.16 : 0.24} />
+    <Rect x={x} y={y} width={pw} height={ph} fill={settings.grassColor} shadowBlur={34} shadowColor={settings.theme === 'dark' ? '#020617' : '#79a684'} shadowOpacity={settings.theme === 'dark' ? 0.3 : 0.18} />
     {Array.from({ length: stripeCount }).map((_, i) => landscape
       ? <Rect key={i} x={x + (pw / stripeCount) * i} y={y} width={pw / stripeCount} height={ph} fill={settings.grassColor} opacity={i % 2 ? 1 : 1 - settings.stripeIntensity} />
       : <Rect key={i} x={x} y={y + (ph / stripeCount) * i} width={pw} height={ph / stripeCount} fill={settings.grassColor} opacity={i % 2 ? 1 : 1 - settings.stripeIntensity} />)}
@@ -264,12 +265,13 @@ function readableTextColor(background: string) {
   return red * 0.299 + green * 0.587 + blue * 0.114 > 155 ? '#0b172a' : '#ffffff';
 }
 
-function PlayerMarker({ player, mapper }: { player: Player; mapper: Mapper }) {
-  const { selectedIds, playing } = useTacticsStore();
+const PlayerMarker = memo(function PlayerMarker({ player, mapper }: { player: Player; mapper: Mapper }) {
+  const selected = useTacticsStore(state => state.selectedIds.includes(player.id));
+  const playing = useTacticsStore(state => state.playing);
   const team = useTacticsStore(state => state.project.teams.find(item => item.id === player.teamId));
   const selectionColor = useTacticsStore(state => state.project.settings.selectionColor ?? '#facc15');
   const [x, y] = mapper.toAbs(player.x, player.y);
-  const selected = !playing && selectedIds.includes(player.id);
+  const isSelected = !playing && selected;
   const markerRadius = baseMarkerRadius * clampRange(player.size ?? 1, 0.65, 1.65);
   const labelWidth = Math.max(88, 108 * clampRange(player.size ?? 1, 0.65, 1.65));
   const hasName = (team?.showNames ?? true) && player.displayName.trim().length > 0;
@@ -278,24 +280,27 @@ function PlayerMarker({ player, mapper }: { player: Player; mapper: Mapper }) {
   const nameTextColor = readableTextColor(nameBackground);
   const badgeImage = team?.badge;
   const showPresetBadge = team?.showBadge ?? true;
-  const hasBadge = Boolean(badgeImage || (showPresetBadge && player.flag));
+  const preset = player.flag ? teamPresetById[player.flag] : undefined;
+  const showCountryFlag = Boolean(showPresetBadge && player.flag && preset?.collection !== 'premier-league');
+  const hasBadge = Boolean(badgeImage || showCountryFlag);
+  const numberColor = hasBadge ? '#07111f' : readableTextColor(player.color);
   if (player.hidden || !player.starter) return null;
 
   return <Group id={`player-node-${player.id}`} x={x} y={y} listening={false}>
     <Group>
-      {selected && <Circle radius={markerRadius + 13} fill={selectionColor} opacity={0.22} stroke={selectionColor} strokeWidth={4} />}
-      <Circle radius={markerRadius + 4} fill="#f8fbff" opacity={0.96} shadowBlur={12} shadowColor="#9bb7de" />
-      <Circle radius={markerRadius} fill={player.color} stroke={selected ? '#2563eb' : player.outline} strokeWidth={selected ? 4 : 2.4} shadowBlur={8} shadowColor="#64748b" opacity={player.opacity} />
-      {showPresetBadge && player.flag && !badgeImage && <CountryFlag flagId={player.flag} radius={markerRadius} />}
+      {isSelected && <Circle radius={markerRadius + 13} fill={selectionColor} opacity={0.22} stroke={selectionColor} strokeWidth={4} />}
+      <Circle radius={markerRadius + 5} fill="#071b12" opacity={0.94} shadowBlur={12} shadowColor="#020617" shadowOpacity={0.32} />
+      <Circle radius={markerRadius} fill={player.color} stroke={isSelected ? selectionColor : player.secondaryColor} strokeWidth={isSelected ? 4 : 3} shadowBlur={5} shadowColor="#020617" shadowOpacity={0.32} opacity={player.opacity} />
+      {showCountryFlag && player.flag && !badgeImage && <CountryFlag flagId={player.flag} radius={markerRadius} />}
       {badgeImage && <CustomBadge url={badgeImage} radius={markerRadius} />}
-      {(team?.showNumbers ?? true) && (player.showNumber ?? true) && <Text text={String(player.number)} width={markerRadius * 2} height={markerRadius * 2} x={-markerRadius} y={-markerRadius} offsetY={1} align="center" verticalAlign="middle" fill={hasBadge ? '#07111f' : '#ffffff'} fontFamily="Inter, Arial, sans-serif" fontStyle="bold" fontSize={clampRange(markerRadius * 0.76, 13, 25)} lineHeight={1} shadowColor={hasBadge ? '#ffffff' : '#0b172a'} shadowBlur={5} shadowOpacity={0.92} />}
+      {(team?.showNumbers ?? true) && (player.showNumber ?? true) && <Text text={String(player.number)} width={markerRadius * 2} height={markerRadius * 2} x={-markerRadius} y={-markerRadius} offsetY={1} align="center" verticalAlign="middle" fill={numberColor} fontFamily="Inter, Arial, sans-serif" fontStyle="bold" fontSize={clampRange(markerRadius * 0.76, 13, 25)} lineHeight={1} shadowColor={hasBadge ? '#ffffff' : numberColor === '#07111f' ? '#ffffff' : '#020617'} shadowBlur={4} shadowOpacity={0.96} />}
       {hasName && <Group x={-labelWidth / 2} y={markerRadius + 6} opacity={player.opacity}>
-        <Rect width={labelWidth} height={25} fill={nameBackground} stroke={selected ? '#2563eb' : '#c7d8ee'} strokeWidth={1.4} cornerRadius={7} shadowBlur={6} shadowColor="#0b172a" shadowOpacity={0.18} />
+        <Rect width={labelWidth} height={25} fill={nameBackground} stroke={isSelected ? '#0f766e' : '#c7d8ee'} strokeWidth={1.4} cornerRadius={7} shadowBlur={6} shadowColor="#0b172a" shadowOpacity={0.18} />
         <Text text={displayName} width={labelWidth} height={25} align="center" verticalAlign="middle" fill={nameTextColor} fontFamily="Inter, Arial, sans-serif" fontSize={12} fontStyle="bold" />
       </Group>}
     </Group>
   </Group>;
-}
+});
 
 type FieldPlayerDrag = { teamId: string; playerIds: string[] };
 
@@ -304,6 +309,7 @@ function BenchTray({ team, side, fieldPlayerDrag, onReceivePlayers }: { team: Te
   const players = team.squad.filter(player => !player.starter || player.hidden);
   const sideClass = side === 'left' ? 'left-2 sm:left-3' : 'right-2 sm:right-3';
   const receiving = fieldPlayerDrag?.teamId === team.id;
+  const teamTextColor = readableTextColor(team.primaryColor);
   return <aside
     onMouseUp={event => {
       if (!receiving) return;
@@ -311,19 +317,22 @@ function BenchTray({ team, side, fieldPlayerDrag, onReceivePlayers }: { team: Te
       event.stopPropagation();
       onReceivePlayers(team.id);
     }}
-    className={`bench-tray bench-tray-${side} pointer-events-auto absolute top-[4.25rem] z-30 flex max-h-[calc(100%-5rem)] w-[4.5rem] flex-col overflow-hidden rounded-xl border bg-white/88 shadow-[0_12px_34px_rgba(11,23,42,.18)] backdrop-blur-md transition sm:w-24 ${receiving ? 'scale-[1.04] border-[#06b6d4] ring-4 ring-[#22d3ee]/30' : 'border-white/70'} ${sideClass}`}
+    className={`bench-tray bench-tray-${side} pointer-events-auto absolute top-[4.25rem] z-30 flex max-h-[min(58dvh,27rem)] w-[4.5rem] flex-col overflow-hidden rounded-xl border bg-white/95 shadow-[0_12px_34px_rgba(11,23,42,.22)] backdrop-blur-md transition sm:w-24 ${receiving ? 'scale-[1.04] border-[#06b6d4] ring-4 ring-[#22d3ee]/30' : ''} ${sideClass}`}
+    style={{ borderColor: receiving ? '#06b6d4' : team.primaryColor }}
   >
-    <div className="shrink-0 border-b border-[#d7e5f6] px-1.5 py-2 text-center">
-      <span className="mx-auto mb-1 block h-1.5 w-8 rounded-full" style={{ backgroundColor: team.primaryColor }} />
-      <p className="truncate text-[9px] font-black uppercase tracking-[0.08em] text-[#0b172a] sm:text-[10px]">{team.shortName || team.name}</p>
-      <p className={`text-[8px] font-black uppercase tracking-[0.14em] ${receiving ? 'text-[#0891b2]' : 'text-slate-500'}`}>{receiving ? 'Drop here' : `Bench ${players.length}`}</p>
+    <div className="shrink-0 border-b px-1.5 py-2 text-center" style={{ backgroundColor: team.primaryColor, borderColor: team.secondaryColor, color: teamTextColor }}>
+      <span className="mx-auto mb-1 block h-1.5 w-8 rounded-full" style={{ backgroundColor: team.secondaryColor }} />
+      <p className="truncate text-[9px] font-black uppercase tracking-[0.08em] sm:text-[10px]">{team.shortName || team.name}</p>
+      <p className="text-[8px] font-black uppercase tracking-[0.14em]" style={{ color: receiving ? '#67e8f9' : teamTextColor, opacity: receiving ? 1 : 0.78 }}>{receiving ? 'Drop here' : `Bench ${players.length}`}</p>
     </div>
     <div className="grid min-h-0 gap-1 overflow-y-auto p-1.5">
       {players.length === 0 && <p className="px-1 py-3 text-center text-[8px] font-bold leading-tight text-slate-400">No substitutes</p>}
       {players.map(player => {
         const showBadge = team.showBadge ?? true;
-        const badge = team.badge || (showBadge && player.flag ? flagImageUrlByPresetId[player.flag] : undefined);
+        const playerPreset = player.flag ? teamPresetById[player.flag] : undefined;
+        const badge = team.badge || (showBadge && playerPreset?.collection !== 'premier-league' && player.flag ? flagImageUrlByPresetId[player.flag] : undefined);
         const selected = selectedIds.includes(player.id);
+        const playerTextColor = badge ? '#07111f' : readableTextColor(player.color);
         return <button
           key={player.id}
           type="button"
@@ -338,7 +347,7 @@ function BenchTray({ team, side, fieldPlayerDrag, onReceivePlayers }: { team: Te
         >
           <span className="relative block h-8 w-8 overflow-hidden rounded-full border-2 border-white shadow-[0_3px_8px_rgba(11,23,42,.2)]" style={{ backgroundColor: player.color }}>
             {badge && <img src={badge} alt="" className="absolute inset-0 h-full w-full object-cover" draggable={false} />}
-            <span className={`absolute inset-0 grid place-items-center text-[11px] font-black leading-none ${badge ? 'text-[#07111f] drop-shadow-[0_1px_2px_white]' : 'text-white drop-shadow-[0_1px_2px_rgba(0,0,0,.5)]'}`}>{player.number}</span>
+            <span className={`absolute inset-0 grid place-items-center text-[11px] font-black leading-none ${badge ? 'drop-shadow-[0_1px_2px_white]' : 'drop-shadow-[0_1px_2px_rgba(0,0,0,.5)]'}`} style={{ color: playerTextColor }}>{player.number}</span>
           </span>
           <span className="block w-full truncate text-center text-[8px] font-black leading-none text-[#0b172a] sm:text-[9px]">{player.displayName || `#${player.number}`}</span>
         </button>;
@@ -480,16 +489,17 @@ function FallbackBallSkin({ radius, design }: { radius: number; design: BallDesi
   </Group>;
 }
 
-function BallMarker({ ball, mapper }: { ball: Ball; mapper: Mapper }) {
-  const { selectedIds, playing } = useTacticsStore();
+const BallMarker = memo(function BallMarker({ ball, mapper }: { ball: Ball; mapper: Mapper }) {
+  const selected = useTacticsStore(state => state.selectedIds.includes('ball'));
+  const playing = useTacticsStore(state => state.playing);
   const [x, y] = mapper.toAbs(ball.x, ball.y);
   const radius = ball.size / 2 + 0.5;
   return <Group id="ball-node" x={x} y={y} listening={false}>
     <BallSkin radius={radius} design={ball.design ?? 'classic'} />
     <Circle radius={radius + 0.55} stroke="#ffffff" strokeWidth={1} opacity={0.96} />
-    {!playing && selectedIds.includes('ball') && <Circle radius={radius + 2.3} stroke="#ffffff" strokeWidth={1.6} opacity={1} />}
+    {!playing && selected && <Circle radius={radius + 2.3} stroke="#ffffff" strokeWidth={1.6} opacity={1} />}
   </Group>;
-}
+});
 
 function shortenLine(points: number[], amount: number) {
   const sx = points[0];
@@ -1078,7 +1088,7 @@ function ManagedBoardHitTargets({ players, ball, drawings, mapper }: { players: 
 }
 
 export function PitchCanvas({ stageRef, onHome, onOpenVideo }: { stageRef: RefObject<Konva.Stage | null>; onHome?: () => void; onOpenVideo?: () => void }) {
-  const { project, selectedIds, tool, toolStyle, viewZoom, dockPosition, playbackFrame, playing, addDrawing, placePlayer, select, toggleSelection, setSelection, checkpointHistory, moveSelectedItems, commitDrawingUpdate, setPlayerStarter, setTool, setDockTab, setDockPosition, updateSettings } = useTacticsStore();
+  const { project, selectedIds, tool, toolStyle, viewZoom, dockPosition, dockTab, playbackFrame, playing, addDrawing, placePlayer, select, toggleSelection, setSelection, checkpointHistory, moveSelectedItems, commitDrawingUpdate, setPlayerStarter, setTool, setDockTab, setDockPosition, updateSettings } = useTacticsStore();
   const [draft, setDraft] = useState<{ id: string; start: number[]; current: number[] } | null>(null);
   const [selection, setSelectionBox] = useState<{ start: number[]; current: number[] } | null>(null);
   const [boardDragPreview, setBoardDragPreview] = useState<BoardDragPreview | null>(null);
@@ -1088,7 +1098,9 @@ export function PitchCanvas({ stageRef, onHome, onOpenVideo }: { stageRef: RefOb
   const [contactOpen, setContactOpen] = useState(false);
   const [emailCopied, setEmailCopied] = useState(false);
   const pointerFrameRef = useRef<number | null>(null);
+  const boardDragFrameRef = useRef<number | null>(null);
   const pendingPointerRef = useRef<{ x: number; y: number } | null>(null);
+  const pendingBoardDragRef = useRef<BoardDragPreview | null>(null);
   const boardDragRef = useRef<BoardDragSession | null>(null);
   const curveDragRef = useRef<CurveDragSession | null>(null);
   const { ref: containerRef, size } = useElementSize<HTMLDivElement>();
@@ -1096,6 +1108,10 @@ export function PitchCanvas({ stageRef, onHome, onOpenVideo }: { stageRef: RefOb
   const dark = project.settings.theme === 'dark';
   const touchCanvas = useMediaQuery('(pointer: coarse), (max-width: 767px)');
   const compactCanvas = useMediaQuery('(max-width: 640px)');
+  const canvasPixelRatio = useMemo(() => {
+    const deviceRatio = typeof window === 'undefined' ? 1 : window.devicePixelRatio || 1;
+    return Math.min(deviceRatio, touchCanvas ? 1 : 1.5);
+  }, [touchCanvas]);
   const pitchScaleX = project.settings.pitchScaleX ?? 1;
   const pitchScaleY = project.settings.pitchScaleY ?? 1;
   const mapper = useMemo(() => makeMapper(width, height, pitchScaleX, pitchScaleY, format === 'landscape'), [format, height, pitchScaleX, pitchScaleY, width]);
@@ -1165,8 +1181,11 @@ export function PitchCanvas({ stageRef, onHome, onOpenVideo }: { stageRef: RefOb
     setFieldPlayerDrag(null);
     boardDragRef.current = null;
     if (pointerFrameRef.current !== null) cancelAnimationFrame(pointerFrameRef.current);
+    if (boardDragFrameRef.current !== null) cancelAnimationFrame(boardDragFrameRef.current);
     pointerFrameRef.current = null;
+    boardDragFrameRef.current = null;
     pendingPointerRef.current = null;
+    pendingBoardDragRef.current = null;
     const stage = stageRef.current;
     if (stage) stage.container().style.cursor = tool === 'select' ? 'default' : 'crosshair';
   }, [tool]);
@@ -1181,6 +1200,7 @@ export function PitchCanvas({ stageRef, onHome, onOpenVideo }: { stageRef: RefOb
 
   useEffect(() => () => {
     if (pointerFrameRef.current !== null) cancelAnimationFrame(pointerFrameRef.current);
+    if (boardDragFrameRef.current !== null) cancelAnimationFrame(boardDragFrameRef.current);
   }, []);
 
   const beginAt = (stage: Konva.Stage) => {
@@ -1251,7 +1271,14 @@ export function PitchCanvas({ stageRef, onHome, onOpenVideo }: { stageRef: RefOb
     const dx = rel.x - session.start.x;
     const dy = rel.y - session.start.y;
     if (Math.hypot(dx, dy) > 0.002) session.moved = true;
-    setBoardDragPreview({ ids: session.ids, dx, dy });
+    pendingBoardDragRef.current = { ids: session.ids, dx, dy };
+    if (boardDragFrameRef.current === null) {
+      boardDragFrameRef.current = requestAnimationFrame(() => {
+        boardDragFrameRef.current = null;
+        const preview = pendingBoardDragRef.current;
+        if (preview && boardDragRef.current) setBoardDragPreview(preview);
+      });
+    }
     stage.container().style.cursor = session.moved ? 'grabbing' : 'grab';
     return true;
   };
@@ -1263,6 +1290,9 @@ export function PitchCanvas({ stageRef, onHome, onOpenVideo }: { stageRef: RefOb
     const dy = rel.y - session.start.y;
     if (session.moved && (dx || dy)) moveSelectedItems(session.ids, dx, dy);
     boardDragRef.current = null;
+    if (boardDragFrameRef.current !== null) cancelAnimationFrame(boardDragFrameRef.current);
+    boardDragFrameRef.current = null;
+    pendingBoardDragRef.current = null;
     setBoardDragPreview(null);
     setFieldPlayerDrag(null);
     stage.container().style.cursor = 'default';
@@ -1412,17 +1442,17 @@ export function PitchCanvas({ stageRef, onHome, onOpenVideo }: { stageRef: RefOb
   };
   const toggleTheme = () => updateSettings({
     theme: dark ? 'portfolio-light' : 'dark',
-    backgroundColor: dark ? '#edf6ff' : '#111827',
-    grassColor: dark ? '#73ad7a' : '#315f43',
-    lineColor: dark ? '#f8fbff' : '#dbeafe',
+    backgroundColor: dark ? '#edf7ef' : '#071b12',
+    grassColor: dark ? '#69a873' : '#2f7a4f',
+    lineColor: '#f8fafc',
   });
 
-  return <div className={`relative flex h-full w-full flex-col overflow-hidden bg-[size:70px_70px,70px_70px,auto,auto] ${dark ? 'bg-[linear-gradient(90deg,rgba(96,165,250,.07)_1px,transparent_1px),linear-gradient(0deg,rgba(96,165,250,.07)_1px,transparent_1px),radial-gradient(circle_at_18%_12%,rgba(37,99,235,.26),transparent_32%),linear-gradient(135deg,#020617,#0f172a_48%,#111827)]' : 'bg-[linear-gradient(90deg,rgba(37,99,235,.035)_1px,transparent_1px),linear-gradient(0deg,rgba(37,99,235,.035)_1px,transparent_1px),radial-gradient(circle_at_18%_12%,#dbeafe,transparent_32%),linear-gradient(135deg,#f6f9ff,#eef7ff_48%,#fbfbf4)]'}`}>
-    <header className={`relative z-20 flex h-14 shrink-0 items-center justify-between gap-3 border-b px-3 backdrop-blur-xl sm:px-4 ${dark ? 'border-slate-800/80 bg-slate-950/60' : 'border-white/70 bg-white/60'}`}>
+  return <div className={`relative flex h-full w-full flex-col overflow-hidden bg-[size:70px_70px,70px_70px,auto,auto] ${dark ? 'bg-[linear-gradient(90deg,rgba(110,231,183,.055)_1px,transparent_1px),linear-gradient(0deg,rgba(110,231,183,.055)_1px,transparent_1px),radial-gradient(circle_at_18%_12%,rgba(16,185,129,.18),transparent_32%),linear-gradient(135deg,#04130b,#0a2113_48%,#06170e)]' : 'bg-[linear-gradient(90deg,rgba(15,118,110,.04)_1px,transparent_1px),linear-gradient(0deg,rgba(15,118,110,.04)_1px,transparent_1px),radial-gradient(circle_at_18%_12%,#d1fae5,transparent_32%),linear-gradient(135deg,#f3f8f3,#edf7ef_48%,#fafbf7)]'}`}>
+    <header className={`relative z-20 flex h-14 shrink-0 items-center justify-between gap-3 border-b px-3 backdrop-blur-xl sm:px-4 ${dark ? 'border-emerald-950/80 bg-[#04130b]/70' : 'border-white/70 bg-white/60'}`}>
       <div className="flex min-w-0 items-center gap-2.5">
         <img src="/ZTBLogo.png" alt="ZaidTacticsBoard logo" className="h-9 w-9 shrink-0 rounded-full bg-white object-cover p-0.5 shadow-[0_5px_18px_rgba(37,99,235,.28)] ring-1 ring-white/80" />
         <div className="min-w-0">
-          <h1 className={`truncate bg-gradient-to-r bg-clip-text text-lg font-black leading-none text-transparent sm:text-xl ${dark ? 'from-white via-[#93c5fd] to-[#5eead4]' : 'from-[#07111f] via-[#2563eb] to-[#0f766e]'}`} style={{ fontFamily: '"Segoe UI Variable Display", "Aptos Display", Inter, system-ui, sans-serif' }}>ZaidTacticsBoard</h1>
+          <h1 className={`truncate bg-gradient-to-r bg-clip-text text-lg font-black leading-none text-transparent sm:text-xl ${dark ? 'from-white via-[#bbf7d0] to-[#5eead4]' : 'from-[#10251a] via-[#0f766e] to-[#15803d]'}`} style={{ fontFamily: '"Segoe UI Variable Display", "Aptos Display", Inter, system-ui, sans-serif' }}>ZaidTacticsBoard</h1>
           <p className={`mt-0.5 hidden text-[8px] font-black uppercase tracking-[0.24em] sm:block ${dark ? 'text-slate-400' : 'text-slate-500'}`}>Tactical studio</p>
         </div>
       </div>
@@ -1461,12 +1491,12 @@ export function PitchCanvas({ stageRef, onHome, onOpenVideo }: { stageRef: RefOb
         </div>}
       </div>
     </header>
-    {project.teams[0] && <BenchTray team={project.teams[0]} side="left" fieldPlayerDrag={fieldPlayerDrag} onReceivePlayers={receivePlayersOnBench} />}
-    {project.teams[1] && <BenchTray team={project.teams[1]} side="right" fieldPlayerDrag={fieldPlayerDrag} onReceivePlayers={receivePlayersOnBench} />}
+    {dockTab !== 'squad' && project.teams[0] && <BenchTray team={project.teams[0]} side="left" fieldPlayerDrag={fieldPlayerDrag} onReceivePlayers={receivePlayersOnBench} />}
+    {dockTab !== 'squad' && project.teams[1] && <BenchTray team={project.teams[1]} side="right" fieldPlayerDrag={fieldPlayerDrag} onReceivePlayers={receivePlayersOnBench} />}
     <div ref={containerRef} onDragOver={e => e.preventDefault()} onDrop={dropPlayer} className="relative min-h-0 flex-1 overflow-auto overscroll-contain">
       <div className="relative z-10 grid min-h-full min-w-full place-items-center p-2 sm:p-4">
         <div className="board-stage-wrap relative shrink-0 touch-none" style={{ width: width * scale, height: height * scale }}>
-          <Stage ref={stageRef} width={width * scale} height={height * scale} scale={{ x: scale, y: scale }}
+          <Stage ref={stageRef} width={width * scale} height={height * scale} scale={{ x: scale, y: scale }} pixelRatio={canvasPixelRatio}
           onMouseDown={(e) => {
             const stage = e.target.getStage();
             if (!stage) return;

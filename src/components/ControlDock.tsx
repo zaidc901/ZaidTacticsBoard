@@ -1,10 +1,10 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { AlertTriangle, BadgeHelp, Circle as CircleIcon, CircleDot, Copy, Download, Eraser, Eye, EyeOff, Film, Frown, ImageDown, ImagePlus, Link2, Minus, MousePointer2, MoveHorizontal, MoveRight, MoveVertical, Palette, PanelBottom, PanelRight, Pencil, Play, Plus, Redo2, RotateCcw, Route, Settings2, Shield, SlidersHorizontal, Square, Trash2, Type, Undo2, Unlink2, UserMinus, UsersRound } from 'lucide-react';
 import { formations, FormationKey } from '../data/formations';
 import { flagImageUrlByPresetId, presetCollections, PresetCollectionId, teamPresetById, teamPresets, TeamPreset } from '../data/teamPresets';
 import { useMediaQuery } from '../hooks/useMediaQuery';
 import { useTacticsStore } from '../store/tacticsStore';
-import { BallDesign, BoardFormat, DockTab, ExportRegion, FillPattern, Scene, Tool, ToolStyle } from '../types/domain';
+import { BallDesign, BoardFormat, BoardSettings, DockTab, ExportRegion, FillPattern, Scene, Tool, ToolStyle } from '../types/domain';
 
 type ControlDockProps = {
   forceBottomDock?: boolean;
@@ -125,16 +125,42 @@ function flagBackground(preset: TeamPreset) {
   return `linear-gradient(${direction}, ${stops})`;
 }
 
+function readableTextColor(color: string) {
+  const hex = color.replace('#', '');
+  if (hex.length !== 6) return '#ffffff';
+  const red = Number.parseInt(hex.slice(0, 2), 16);
+  const green = Number.parseInt(hex.slice(2, 4), 16);
+  const blue = Number.parseInt(hex.slice(4, 6), 16);
+  return (red * 299 + green * 587 + blue * 114) / 1000 > 155 ? '#07111f' : '#ffffff';
+}
+
+function useRafCommit<T>(commit: (value: T) => void) {
+  const frameRef = useRef<number | undefined>(undefined);
+  const pendingRef = useRef<T | undefined>(undefined);
+  useEffect(() => () => {
+    if (frameRef.current !== undefined) cancelAnimationFrame(frameRef.current);
+  }, []);
+  return (value: T) => {
+    pendingRef.current = value;
+    if (frameRef.current !== undefined) return;
+    frameRef.current = requestAnimationFrame(() => {
+      frameRef.current = undefined;
+      if (pendingRef.current !== undefined) commit(pendingRef.current);
+    });
+  };
+}
+
 function FlagNumberChip({ flagId, badgeImage, showFlag = true, color, number, showNumber = true, size = 'md' }: { flagId?: string; badgeImage?: string; showFlag?: boolean; color: string; number: number; showNumber?: boolean; size?: 'sm' | 'md' }) {
   const preset = flagId ? teamPresetById[flagId] : undefined;
-  const visibleFlag = showFlag ? preset : undefined;
+  const visibleFlag = showFlag && preset?.collection !== 'premier-league' ? preset : undefined;
   const hasBadge = Boolean(badgeImage || visibleFlag);
   const dimension = size === 'sm' ? 'h-7 w-7 text-[10px]' : 'h-8 w-8 text-[11px]';
-  return <span className={`relative shrink-0 overflow-hidden rounded-full font-black text-[#07111f] ring-1 ring-white/80 ${dimension}`} style={{ background: visibleFlag ? flagBackground(visibleFlag) : color }}>
+  const textColor = hasBadge ? '#07111f' : readableTextColor(color);
+  return <span className={`relative shrink-0 overflow-hidden rounded-full font-black ring-1 ring-white/80 ${dimension}`} style={{ background: visibleFlag ? flagBackground(visibleFlag) : color }}>
     {visibleFlag && <img src={flagImageUrlByPresetId[visibleFlag.id]} alt="" className="absolute inset-0 h-full w-full object-cover" loading="lazy" draggable={false} onError={event => { event.currentTarget.style.display = 'none'; }} />}
     {badgeImage && <img src={badgeImage} alt="" className="absolute inset-0 h-full w-full object-cover" draggable={false} />}
     {hasBadge && <span className="absolute inset-0 bg-white/10" />}
-    {showNumber && <span className={`absolute inset-0 z-10 grid place-items-center leading-none ${hasBadge ? 'drop-shadow-[0_1px_2px_rgba(255,255,255,.95)]' : 'text-white drop-shadow-[0_1px_2px_rgba(0,0,0,.35)]'}`}>{number}</span>}
+    {showNumber && <span className={`absolute inset-0 z-10 grid place-items-center leading-none ${hasBadge ? 'drop-shadow-[0_1px_2px_rgba(255,255,255,.95)]' : 'drop-shadow-[0_1px_2px_rgba(0,0,0,.35)]'}`} style={{ color: textColor }}>{number}</span>}
   </span>;
 }
 
@@ -217,11 +243,32 @@ function Field({ label, value, onChange, type = 'text', min, max, step }: { labe
 }
 
 function ColorField({ label, value, onChange }: { label: string; value: string; onChange: (value: string) => void }) {
+  const [draft, setDraft] = useState(value);
+  const timerRef = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
+  useEffect(() => {
+    if (timerRef.current === undefined) setDraft(value);
+  }, [value]);
+  useEffect(() => () => {
+    if (timerRef.current !== undefined) clearTimeout(timerRef.current);
+  }, []);
+  const scheduleChange = (nextValue: string) => {
+    setDraft(nextValue);
+    if (timerRef.current !== undefined) clearTimeout(timerRef.current);
+    timerRef.current = setTimeout(() => {
+      timerRef.current = undefined;
+      onChange(nextValue);
+    }, 110);
+  };
+  const flushChange = () => {
+    if (timerRef.current !== undefined) clearTimeout(timerRef.current);
+    timerRef.current = undefined;
+    if (draft !== value) onChange(draft);
+  };
   return <label className="dock-field space-y-1 text-[10px] font-black uppercase tracking-[0.14em] text-slate-500">
     <span>{label}</span>
     <span className="flex h-9 items-center gap-2 rounded-lg border border-[#d7e5f6] bg-white/80 p-1 pr-2 normal-case tracking-normal text-[#0b172a]">
-      <input aria-label={label} className="dock-color-input h-7 w-10 shrink-0 cursor-pointer outline-none" type="color" value={value} onChange={e => onChange(e.target.value)} />
-      <span className="min-w-0 truncate font-mono text-[10px] font-bold uppercase">{value}</span>
+      <input aria-label={label} className="dock-color-input h-7 w-10 shrink-0 cursor-pointer outline-none" type="color" value={draft} onChange={e => scheduleChange(e.target.value)} onBlur={flushChange} />
+      <span className="min-w-0 truncate font-mono text-[10px] font-bold uppercase">{draft}</span>
     </span>
   </label>;
 }
@@ -302,6 +349,7 @@ export function PitchScaleControl({ embedded = false }: { embedded?: boolean } =
   const maxZoom = touchControls ? 2.4 : 1.35;
   const zoomStep = touchControls ? 0.1 : 0.05;
   const setZoom = (zoom: number) => setViewZoom(Math.max(0.35, Math.min(maxZoom, zoom)));
+  const setZoomRaf = useRafCommit(setZoom);
   useEffect(() => {
     if (viewZoom > maxZoom) setViewZoom(maxZoom);
   }, [maxZoom, setViewZoom, viewZoom]);
@@ -312,7 +360,7 @@ export function PitchScaleControl({ embedded = false }: { embedded?: boolean } =
     <button aria-label="Zoom pitch out" title="Zoom pitch out" onClick={() => setZoom(viewZoom - zoomStep)} className={`grid h-7 w-7 place-items-center rounded-lg ${buttonClass}`}><Minus size={14} /></button>
     <label className="flex items-center gap-2" title="Pitch scale">
       <SlidersHorizontal size={14} className="text-[#2563eb]" />
-      <input aria-label="Pitch scale" type="range" min="0.35" max={maxZoom} step="0.01" value={Math.min(viewZoom, maxZoom)} onChange={event => setZoom(Number(event.target.value))} className={`${sliderWidthClass} accent-[#2563eb]`} />
+      <input aria-label="Pitch scale" type="range" min="0.35" max={maxZoom} step="0.01" value={Math.min(viewZoom, maxZoom)} onChange={event => setZoomRaf(Number(event.target.value))} className={`${sliderWidthClass} accent-[#2563eb]`} />
       <span className="w-9 text-right text-[10px] font-black">{Math.round(viewZoom * 100)}%</span>
     </label>
     <button aria-label="Zoom pitch in" title="Zoom pitch in" onClick={() => setZoom(viewZoom + zoomStep)} className={`grid h-7 w-7 place-items-center rounded-lg ${buttonClass}`}><Plus size={14} /></button>
@@ -350,6 +398,8 @@ function PagePanel() {
   const dark = project.settings.theme === 'dark';
   const pitchScaleX = project.settings.pitchScaleX ?? 1;
   const pitchScaleY = project.settings.pitchScaleY ?? 1;
+  const setZoomRaf = useRafCommit(setViewZoom);
+  const updateSettingsRaf = useRafCommit((patch: Partial<BoardSettings>) => updateSettings(patch));
   const resetBoard = () => {
     resetElevenAside();
     setViewZoom(1.08);
@@ -366,7 +416,7 @@ function PagePanel() {
         <p className="text-[10px] font-black uppercase tracking-[0.22em] text-[#2563eb]">Pitch scale</p>
         <span className="flex items-center gap-1 text-xs font-black text-[#0b172a]"><SlidersHorizontal size={14} /> {Math.round(viewZoom * 100)}%</span>
       </div>
-      <input type="range" min="0.35" max="1.35" step="0.01" value={viewZoom} onChange={e => setViewZoom(Number(e.target.value))} className="w-full accent-[#2563eb]" />
+      <input type="range" min="0.35" max="1.35" step="0.01" value={viewZoom} onChange={e => setZoomRaf(Number(e.target.value))} className="w-full accent-[#2563eb]" />
       <div className="grid grid-cols-2 gap-2">
         <ColorField label="Grass" value={project.settings.grassColor} onChange={v => updateSettings({ grassColor: v })} />
         <ColorField label="Lines" value={project.settings.lineColor} onChange={v => updateSettings({ lineColor: v })} />
@@ -390,12 +440,12 @@ function PagePanel() {
       <div className="grid gap-1.5">
         <label className="grid grid-cols-[auto_1fr_auto] items-center gap-2 rounded-lg border border-[#d7e5f6] bg-white/70 px-2 py-1">
           <MoveHorizontal size={14} className="text-[#2563eb]" />
-          <input type="range" min="0.5" max="1.24" step="0.01" value={pitchScaleX} onChange={event => updateSettings({ pitchScaleX: Number(event.target.value) })} className="w-full accent-[#2563eb]" />
+          <input type="range" min="0.5" max="1.24" step="0.01" value={pitchScaleX} onChange={event => updateSettingsRaf({ pitchScaleX: Number(event.target.value) })} className="w-full accent-[#2563eb]" />
           <span className="w-9 text-right text-[10px] font-black text-[#0b172a]">{Math.round(pitchScaleX * 100)}%</span>
         </label>
         <label className="grid grid-cols-[auto_1fr_auto] items-center gap-2 rounded-lg border border-[#d7e5f6] bg-white/70 px-2 py-1">
           <MoveVertical size={14} className="text-[#2563eb]" />
-          <input type="range" min="0.5" max="1.24" step="0.01" value={pitchScaleY} onChange={event => updateSettings({ pitchScaleY: Number(event.target.value) })} className="w-full accent-[#2563eb]" />
+          <input type="range" min="0.5" max="1.24" step="0.01" value={pitchScaleY} onChange={event => updateSettingsRaf({ pitchScaleY: Number(event.target.value) })} className="w-full accent-[#2563eb]" />
           <span className="w-9 text-right text-[10px] font-black text-[#0b172a]">{Math.round(pitchScaleY * 100)}%</span>
         </label>
       </div>
@@ -414,11 +464,12 @@ function PagePanel() {
 }
 
 function SquadPanel() {
-  const { project, selectedId, select, updateTeam, addPlayer, applyFormation, setTeamPlayerCount } = useTacticsStore();
+  const { project, selectedId, select, updateTeam, setTeamKitVariant, updateTeamKit, addPlayer, applyFormation, setTeamPlayerCount } = useTacticsStore();
   const dark = project.settings.theme === 'dark';
   return <div className="space-y-3">
     <div className="dock-team-grid grid gap-3 lg:grid-cols-2">
       {project.teams.map(team => {
+        const kitVariant = team.kitVariant ?? 'home';
         const onFieldCount = team.squad.filter(player => player.starter && !player.hidden).length;
         const starters = team.squad.filter(player => player.starter && !player.hidden);
         const bench = team.squad.filter(player => !player.starter || player.hidden);
@@ -447,8 +498,13 @@ function SquadPanel() {
             : <span className="flex h-9 items-center rounded-lg border border-[#bfdbfe] bg-[#eff6ff] px-3 text-[10px] font-black uppercase tracking-[0.1em] text-[#1d4ed8]">Custom {onFieldCount}-a-side</span>}
           <button onClick={() => addPlayer(team.id)} className="flex h-9 items-center gap-1.5 whitespace-nowrap rounded-lg bg-[#2563eb] px-3 text-xs font-black text-white"><Plus size={15} /> Add player</button>
           <input className="w-12 bg-transparent text-right text-xs font-black uppercase text-slate-500 outline-none" value={team.shortName} onChange={e => updateTeam(team.id, { shortName: e.target.value })} />
-          <label className="flex h-9 items-center gap-1.5 rounded-lg border border-[#d7e5f6] bg-white/80 px-2 text-[10px] font-black uppercase text-slate-500">Outfield <input className="h-7 w-8 border-0 p-0" type="color" value={team.primaryColor} onChange={e => updateTeam(team.id, { primaryColor: e.target.value })} /></label>
-          <label className="flex h-9 items-center gap-1.5 rounded-lg border border-[#d7e5f6] bg-white/80 px-2 text-[10px] font-black uppercase text-slate-500">GK <input className="h-7 w-8 border-0 p-0" type="color" value={team.goalkeeperColor} onChange={e => updateTeam(team.id, { goalkeeperColor: e.target.value })} /></label>
+          <div className="flex h-9 overflow-hidden rounded-lg border border-[#d7e5f6] bg-white/80 text-[10px] font-black uppercase">
+            <button title="Use the home kit" onClick={() => setTeamKitVariant(team.id, 'home')} className={`px-2.5 transition ${kitVariant === 'home' ? 'bg-[#0b172a] text-white' : 'text-slate-500 hover:bg-[#eff6ff]'}`}>Home</button>
+            <button title="Use the away kit to avoid a clash" onClick={() => setTeamKitVariant(team.id, 'away')} className={`px-2.5 transition ${kitVariant === 'away' ? 'bg-[#2563eb] text-white' : 'text-slate-500 hover:bg-[#eff6ff]'}`}>Away</button>
+          </div>
+          <label className="flex h-9 items-center gap-1.5 rounded-lg border border-[#d7e5f6] bg-white/80 px-2 text-[10px] font-black uppercase text-slate-500">Kit <input title={`${kitVariant} outfield colour`} className="h-7 w-8 border-0 p-0" type="color" value={team.primaryColor} onChange={e => updateTeamKit(team.id, { primaryColor: e.target.value })} /></label>
+          <label className="flex h-9 items-center gap-1.5 rounded-lg border border-[#d7e5f6] bg-white/80 px-2 text-[10px] font-black uppercase text-slate-500">Trim <input title={`${kitVariant} trim colour`} className="h-7 w-8 border-0 p-0" type="color" value={team.secondaryColor} onChange={e => updateTeamKit(team.id, { secondaryColor: e.target.value })} /></label>
+          <label className="flex h-9 items-center gap-1.5 rounded-lg border border-[#d7e5f6] bg-white/80 px-2 text-[10px] font-black uppercase text-slate-500">GK <input title={`${kitVariant} goalkeeper colour`} className="h-7 w-8 border-0 p-0" type="color" value={team.goalkeeperColor} onChange={e => updateTeamKit(team.id, { goalkeeperColor: e.target.value })} /></label>
           <button onClick={() => updateTeam(team.id, { showNumbers: !(team.showNumbers ?? true) })} className={`h-9 rounded-lg border px-2 text-[10px] font-black uppercase ${team.showNumbers ?? true ? 'border-[#2563eb] bg-[#eff6ff] text-[#1d4ed8]' : 'border-[#d7e5f6] bg-white/80 text-[#0b172a]'}`}>Numbers {team.showNumbers ?? true ? 'on' : 'off'}</button>
           <button onClick={() => updateTeam(team.id, { showNames: !(team.showNames ?? true) })} className={`h-9 rounded-lg border px-2 text-[10px] font-black uppercase ${team.showNames ?? true ? 'border-[#2563eb] bg-[#eff6ff] text-[#1d4ed8]' : 'border-[#d7e5f6] bg-white/80 text-[#0b172a]'}`}>Names {team.showNames ?? true ? 'on' : 'off'}</button>
           <label title="Upload one badge for every player in this team" className="grid h-9 w-9 cursor-pointer place-items-center rounded-lg border border-[#d7e5f6] bg-white/80 text-[#2563eb] hover:border-[#2563eb]">
@@ -482,10 +538,10 @@ function PresetTeamsPanel() {
   const { project, playing, updateTeam } = useTacticsStore();
   const dark = project.settings.theme === 'dark';
   const [teamId, setTeamId] = useState(project.teams[0]?.id ?? '');
-  const [collectionId, setCollectionId] = useState<PresetCollectionId | undefined>();
+  const [collectionId, setCollectionId] = useState<PresetCollectionId>('premier-league');
   const selectedTeamId = project.teams.some(team => team.id === teamId) ? teamId : project.teams[0]?.id;
   const selectedTeam = project.teams.find(team => team.id === selectedTeamId);
-  const visiblePresets = collectionId === 'world-cup-2026' ? teamPresets : [];
+  const visiblePresets = teamPresets.filter(preset => (preset.collection ?? 'world-cup-2026') === collectionId);
 
   const applyOfflinePreset = async (preset: TeamPreset) => {
     if (!selectedTeamId || playing) return;
@@ -508,15 +564,21 @@ function PresetTeamsPanel() {
         <Shield size={14} /> Team badges {selectedTeam?.showBadge ?? true ? 'on' : 'off'}
       </button>
     </div>
-    {!collectionId && <div className="rounded-lg border border-dashed border-[#d7e5f6] bg-white/60 px-3 py-4 text-sm font-semibold text-slate-500">Choose a preset pack to show teams.</div>}
-    {collectionId && visiblePresets.length === 0 && <div className="rounded-lg border border-dashed border-[#d7e5f6] bg-white/60 px-3 py-4 text-sm font-semibold text-slate-500">This preset pack is ready in the menu structure; teams can be loaded into it next.</div>}
+    {visiblePresets.length === 0 && <div className="rounded-lg border border-dashed border-[#d7e5f6] bg-white/60 px-3 py-4 text-sm font-semibold text-slate-500">No teams are available in this preset pack yet.</div>}
     {collectionId === 'world-cup-2026' && <p className="rounded-lg border border-[#d7e5f6] bg-white/70 px-3 py-2 text-xs font-bold text-slate-600">Preset starting 11s are based on the first World Cup games.</p>}
+    {collectionId === 'premier-league' && <p className="rounded-lg border border-[#d7e5f6] bg-white/70 px-3 py-2 text-xs font-bold text-slate-600">2026/27 squads and starting XIs use the supplied squad sheet. Reserves load straight into the bench.</p>}
     <div className="dock-preset-grid grid max-h-44 gap-1.5 overflow-y-auto pr-1 sm:grid-cols-4 lg:grid-cols-7 xl:grid-cols-10">
-      {visiblePresets.map(preset => <button key={preset.id} disabled={playing || !selectedTeamId} onClick={() => void applyOfflinePreset(preset)} title={`Load ${preset.name}`} className="group relative min-h-20 overflow-hidden rounded-lg border border-[#d7e5f6] bg-white/80 text-left shadow-[0_10px_24px_rgba(37,99,235,.08)] transition hover:-translate-y-0.5 hover:border-[#2563eb] disabled:opacity-45">
-        <span className="absolute inset-0" style={{ background: flagBackground(preset) }} />
-        <img src={flagImageUrlByPresetId[preset.id]} alt="" className="absolute inset-0 h-full w-full object-cover" loading="lazy" draggable={false} onError={event => { event.currentTarget.style.display = 'none'; }} />
-        <span className={`absolute left-2 top-2 max-w-[calc(100%-1rem)] rounded-md border px-2 py-1 text-left text-[10px] font-black uppercase tracking-[0.06em] shadow-[0_4px_12px_rgba(11,23,42,.12)] backdrop-blur-[2px] transition ${dark ? 'border-slate-600 bg-slate-900/90 text-slate-100 group-hover:bg-slate-900' : 'border-white/60 bg-white/92 text-[#0b172a] group-hover:bg-white'}`}>{preset.name}</span>
-      </button>)}
+      {visiblePresets.map(preset => {
+        const isClub = preset.collection === 'premier-league';
+        const cardBackground = isClub
+          ? `linear-gradient(135deg, ${preset.primaryColor} 0 62%, ${preset.secondaryColor} 62% 100%)`
+          : flagBackground(preset);
+        return <button key={preset.id} disabled={playing || !selectedTeamId} onClick={() => void applyOfflinePreset(preset)} title={`Load ${preset.name}`} className="group relative min-h-20 overflow-hidden rounded-lg border border-[#d7e5f6] bg-white/80 text-left shadow-[0_10px_24px_rgba(37,99,235,.08)] transition hover:-translate-y-0.5 hover:border-[#2563eb] disabled:opacity-45">
+          <span className="absolute inset-0" style={{ background: cardBackground }} />
+          {!isClub && <img src={flagImageUrlByPresetId[preset.id]} alt="" className="absolute inset-0 h-full w-full object-cover" loading="lazy" draggable={false} onError={event => { event.currentTarget.style.display = 'none'; }} />}
+          <span className={`absolute left-2 top-2 max-w-[calc(100%-1rem)] rounded-md border px-2 py-1 text-left text-[10px] font-black uppercase tracking-[0.06em] shadow-[0_4px_12px_rgba(11,23,42,.12)] backdrop-blur-[2px] transition ${dark ? 'border-slate-600 bg-slate-900/90 text-slate-100 group-hover:bg-slate-900' : 'border-white/60 bg-white/92 text-[#0b172a] group-hover:bg-white'}`}>{preset.name}</span>
+        </button>;
+      })}
     </div>
   </div>;
 }

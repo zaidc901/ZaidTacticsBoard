@@ -2,9 +2,10 @@ import { create } from 'zustand';
 import { createJSONStorage, persist } from 'zustand/middleware';
 import { formations, FormationKey } from '../data/formations';
 import { presetStartingLineups, PresetStartingLineupPlayer } from '../data/presetStartingLineups';
+import { premierLeagueSquads, premierLeagueStartingLineups } from '../data/premierLeagueSquads';
 import { teamPresetById } from '../data/teamPresets';
 import worldCupSquadsByPresetId from '../data/worldCupSquads.generated.json';
-import { Ball, BoardFormat, BoardSettings, DockPosition, DockTab, Drawing, PlaybackFrame, Player, Project, Scene, Team, Tool, ToolStyle } from '../types/domain';
+import { Ball, BoardFormat, BoardSettings, DockPosition, DockTab, Drawing, KitColors, KitVariant, PlaybackFrame, Player, Project, Scene, Team, Tool, ToolStyle } from '../types/domain';
 
 const id = () => crypto.randomUUID();
 const now = () => new Date().toISOString();
@@ -118,11 +119,11 @@ const defaultSettings: BoardSettings = {
   ...boardViews.portrait,
   customWidth: 1280,
   customHeight: 1920,
-  grassColor: '#315f43',
-  lineColor: '#dbeafe',
+  grassColor: '#2f7a4f',
+  lineColor: '#f8fafc',
   lineThickness: 4,
   stripeIntensity: 0.1,
-  backgroundColor: '#111827',
+  backgroundColor: '#071b12',
   border: true,
   pitchScaleX: 1,
   pitchScaleY: 1,
@@ -132,7 +133,7 @@ const defaultSettings: BoardSettings = {
   linkedAreasFollowPlayers: true,
   selectionColor: '#facc15',
   theme: 'dark',
-  accentColor: '#2563eb',
+  accentColor: '#0f766e',
 };
 
 const defaultToolStyle: ToolStyle = {
@@ -150,6 +151,11 @@ const generatedRoleLabels = new Set(roleNames.map(name => name.toUpperCase()));
 const defaultPositions = ['GK', 'LB', 'LCB', 'RCB', 'RB', 'LCM', 'DM', 'RCM', 'LW', 'ST', 'RW'];
 type PresetSquadPlayer = { no: number; pos: string; name?: string };
 const worldCupSquads = worldCupSquadsByPresetId as Record<string, PresetSquadPlayer[] | undefined>;
+const presetSquads: Record<string, PresetSquadPlayer[] | undefined> = { ...worldCupSquads, ...premierLeagueSquads };
+const allPresetStartingLineups: Record<string, { formation: FormationKey; players: PresetStartingLineupPlayer[] }> = {
+  ...presetStartingLineups,
+  ...premierLeagueStartingLineups,
+};
 
 function ownHalfPoint(point: { x: number; y: number }, away = false) {
   return {
@@ -202,9 +208,50 @@ function makeBaseplateSquad(teamId: string, seed: number, primaryColor: string, 
 function makeTeam(seed: number, name: string, primaryColor: string, secondaryColor: string, formation: FormationKey, invert = false): Team {
   const teamId = `team-${seed}`;
   const goalkeeperColor = seed === 1 ? '#f59e0b' : '#7c3aed';
+  const homeKit: KitColors = { primaryColor, secondaryColor, goalkeeperColor };
+  const awayKit: KitColors = {
+    primaryColor: primaryColor.toLowerCase() === '#ffffff' ? '#0f172a' : '#ffffff',
+    secondaryColor: primaryColor.toLowerCase() === '#ffffff' ? secondaryColor : '#0f172a',
+    goalkeeperColor: seed === 1 ? '#7c3aed' : '#f59e0b',
+  };
   return {
-    id: teamId, name, shortName: seed === 1 ? 'HOM' : 'AWY', primaryColor, secondaryColor, goalkeeperColor, formation, showBadge: true, showNumbers: true, showNames: true,
+    id: teamId, name, shortName: seed === 1 ? 'HOM' : 'AWY', primaryColor, secondaryColor, goalkeeperColor, kitVariant: 'home', homeKit, awayKit, formation, showBadge: true, showNumbers: true, showNames: true,
     squad: makeBaseplateSquad(teamId, seed, primaryColor, secondaryColor, formation, 'portrait', invert, goalkeeperColor),
+  };
+}
+
+function defaultAwayKit(team: Pick<Team, 'primaryColor' | 'secondaryColor' | 'goalkeeperColor'>): KitColors {
+  const lightPrimary = team.primaryColor.toLowerCase() === '#ffffff';
+  return {
+    primaryColor: lightPrimary ? '#0f172a' : '#ffffff',
+    secondaryColor: lightPrimary ? team.secondaryColor : '#0f172a',
+    goalkeeperColor: team.goalkeeperColor.toLowerCase() === '#7c3aed' ? '#f59e0b' : '#7c3aed',
+  };
+}
+
+function teamKits(team: Team) {
+  const homeKit: KitColors = team.homeKit ?? {
+    primaryColor: team.primaryColor,
+    secondaryColor: team.secondaryColor,
+    goalkeeperColor: team.goalkeeperColor,
+  };
+  return { homeKit, awayKit: team.awayKit ?? defaultAwayKit(team) };
+}
+
+function applyKit(team: Team, kitVariant: KitVariant): Team {
+  const { homeKit, awayKit } = teamKits(team);
+  const kit = kitVariant === 'away' ? awayKit : homeKit;
+  return {
+    ...team,
+    ...kit,
+    kitVariant,
+    homeKit,
+    awayKit,
+    squad: team.squad.map(player => ({
+      ...player,
+      color: player.position === 'GK' ? kit.goalkeeperColor : kit.primaryColor,
+      secondaryColor: kit.secondaryColor,
+    })),
   };
 }
 
@@ -266,7 +313,7 @@ function lineupMatchScore(entry: PresetStartingLineupPlayer, player: PresetSquad
 }
 
 function rosterFromStartingLineup(presetId: string, roster: PresetSquadPlayer[]) {
-  const lineup = presetStartingLineups[presetId];
+  const lineup = allPresetStartingLineups[presetId];
   if (!lineup) return undefined;
   const used = new Set<PresetSquadPlayer>();
   let nextNumber = Math.max(0, ...roster.map(player => player.no)) + 1;
@@ -310,10 +357,10 @@ function orderRosterForFormation(roster: PresetSquadPlayer[], formation: string)
 
 function makePresetSquad(teamId: string, presetId: string, format: BoardFormat, away = false): Player[] {
   const preset = teamPresetById[presetId] ?? teamPresetById.iraq;
-  const lineup = presetStartingLineups[preset.id];
+  const lineup = allPresetStartingLineups[preset.id];
   const formation = lineup?.formation ?? preset.formation;
   const coords = formations[formation] ?? formations['4-3-3'];
-  const roster = worldCupSquads[preset.id] ?? placeholderSquad();
+  const roster = presetSquads[preset.id] ?? placeholderSquad();
   const base = rosterFromStartingLineup(preset.id, roster) ?? orderRosterForFormation(roster, formation);
   return base.map((item, index) => {
     const fullName = item.name ?? '';
@@ -424,6 +471,8 @@ interface Store {
   applyBaseplate: (teamId: string, entryX?: number) => void;
   applyIraqPreset: (teamId: string) => void;
   updateTeam: (teamId: string, patch: Partial<Team>) => void;
+  setTeamKitVariant: (teamId: string, kitVariant: KitVariant) => void;
+  updateTeamKit: (teamId: string, patch: Partial<KitColors>) => void;
   moveBall: (x: number, y: number) => void;
   updateBall: (patch: Partial<Ball>) => void;
   addDrawing: (drawing: Drawing) => void;
@@ -602,7 +651,14 @@ export const useTacticsStore = create<Store>()(persist((set, get) => ({
       if (team.id !== teamId) return team;
       const preset = teamPresetById[presetId] ?? teamPresetById.iraq;
       const goalkeeperColor = preset.secondaryColor === '#ffffff' ? '#f59e0b' : preset.secondaryColor;
-      return { ...team, name: preset.name, shortName: preset.initials, primaryColor: preset.primaryColor, secondaryColor: preset.secondaryColor, goalkeeperColor, formation: presetStartingLineups[preset.id]?.formation ?? preset.formation, preset: preset.id, showBadge: team.showBadge ?? true, squad: makePresetSquad(team.id, preset.id, project.settings.format, index === 1) };
+      const homeKit: KitColors = { primaryColor: preset.primaryColor, secondaryColor: preset.secondaryColor, goalkeeperColor };
+      const fallbackAway = defaultAwayKit(homeKit);
+      const awayKit: KitColors = {
+        primaryColor: preset.awayPrimaryColor ?? fallbackAway.primaryColor,
+        secondaryColor: preset.awaySecondaryColor ?? fallbackAway.secondaryColor,
+        goalkeeperColor: goalkeeperColor === '#7c3aed' ? '#f59e0b' : '#7c3aed',
+      };
+      return { ...team, name: preset.name, shortName: preset.initials, ...homeKit, kitVariant: 'home', homeKit, awayKit, formation: allPresetStartingLineups[preset.id]?.formation ?? preset.formation, preset: preset.id, showBadge: team.showBadge ?? true, squad: makePresetSquad(team.id, preset.id, project.settings.format, index === 1) } as Team;
     });
     const nextProject = { ...project, teams: nextTeams, updatedAt: now() };
     return { project: nextProject, selectedId: undefined, selectedIds: [], playbackFrame: entryX === undefined ? undefined : entryPlaybackFrame(nextProject, teamId, entryX) };
@@ -615,6 +671,8 @@ export const useTacticsStore = create<Store>()(persist((set, get) => ({
       const secondaryColor = seed === 1 ? '#eff6ff' : '#bfdbfe';
       const goalkeeperColor = seed === 1 ? '#f59e0b' : '#7c3aed';
       const formation: FormationKey = '4-3-3';
+      const homeKit: KitColors = { primaryColor, secondaryColor, goalkeeperColor };
+      const awayKit = defaultAwayKit(homeKit);
       return {
         ...team,
         name: `Team ${seed}`,
@@ -622,12 +680,15 @@ export const useTacticsStore = create<Store>()(persist((set, get) => ({
         primaryColor,
         secondaryColor,
         goalkeeperColor,
+        kitVariant: 'home',
+        homeKit,
+        awayKit,
         formation,
         preset: undefined,
         badge: undefined,
         showBadge: true,
         squad: makeBaseplateSquad(team.id, seed, primaryColor, secondaryColor, formation, project.settings.format, index === 1, goalkeeperColor),
-      };
+      } as Team;
     });
     const nextProject = { ...project, teams: nextTeams, updatedAt: now() };
     return { project: nextProject, selectedId: undefined, selectedIds: [], playbackFrame: entryX === undefined ? undefined : entryPlaybackFrame(nextProject, teamId, entryX) };
@@ -638,6 +699,22 @@ export const useTacticsStore = create<Store>()(persist((set, get) => ({
     color: p.position === 'GK' ? (patch.goalkeeperColor ?? p.color) : (patch.primaryColor ?? p.color),
     secondaryColor: patch.secondaryColor ?? p.secondaryColor,
   })) } : t), updatedAt: now() } })),
+  setTeamKitVariant: (teamId, kitVariant) => set(({ project }) => ({
+    project: { ...project, teams: project.teams.map(team => team.id === teamId ? applyKit(team, kitVariant) : team), updatedAt: now() },
+  })),
+  updateTeamKit: (teamId, patch) => set(({ project }) => ({
+    project: {
+      ...project,
+      teams: project.teams.map(team => {
+        if (team.id !== teamId) return team;
+        const kitVariant = team.kitVariant ?? 'home';
+        const { homeKit, awayKit } = teamKits(team);
+        const updatedKit = { ...(kitVariant === 'away' ? awayKit : homeKit), ...patch };
+        return applyKit(kitVariant === 'away' ? { ...team, awayKit: updatedKit } : { ...team, homeKit: updatedKit }, kitVariant);
+      }),
+      updatedAt: now(),
+    },
+  })),
   moveBall: (x, y) => set(({ project, historyPast }) => ({
     project: { ...project, ball: { ...project.ball, x, y }, updatedAt: now() },
     historyPast: [...historyPast.slice(-49), snapshotBoard(project)],
@@ -773,19 +850,21 @@ export const useTacticsStore = create<Store>()(persist((set, get) => ({
   importProject: (project) => set({ project: { ...project, updatedAt: now() }, historyPast: [], historyFuture: [] }),
 }), {
   name: 'tactical-studio-session-v5',
-  version: 10,
+  version: 12,
   storage: createJSONStorage(() => sessionStorage),
   migrate: (persisted) => {
     const state = persisted as Partial<Store>;
     if (!state.project) return state as Store;
     const previousSettings = state.project.settings ?? {};
     const migratedSettings = { ...defaultSettings, ...previousSettings };
-    if (!previousSettings.theme || previousSettings.theme === 'portfolio-light') {
+    const usingLegacyPitch = previousSettings.grassColor === '#315f43' && previousSettings.lineColor === '#dbeafe';
+    if (!previousSettings.theme || previousSettings.theme === 'portfolio-light' || usingLegacyPitch) {
       Object.assign(migratedSettings, {
         theme: 'dark',
-        backgroundColor: '#111827',
-        grassColor: '#315f43',
-        lineColor: '#dbeafe',
+        backgroundColor: '#071b12',
+        grassColor: '#2f7a4f',
+        lineColor: '#f8fafc',
+        accentColor: '#0f766e',
       });
     }
     return {
@@ -794,14 +873,21 @@ export const useTacticsStore = create<Store>()(persist((set, get) => ({
         ...state.project,
         settings: migratedSettings,
         ball: { ...state.project.ball, size: 15 },
-        teams: state.project.teams.map(team => ({
-          ...team,
-          goalkeeperColor: team.goalkeeperColor ?? team.squad.find(player => player.position === 'GK')?.color ?? '#f59e0b',
-          showBadge: team.showBadge ?? true,
-          showNumbers: team.showNumbers ?? true,
-          showNames: team.showNames ?? true,
-          squad: team.squad.map(player => ({ ...player, showNumber: player.showNumber ?? true })),
-        })),
+        teams: state.project.teams.map(team => {
+          const goalkeeperColor = team.goalkeeperColor ?? team.squad.find(player => player.position === 'GK')?.color ?? '#f59e0b';
+          const normalizedTeam = { ...team, goalkeeperColor } as Team;
+          const { homeKit, awayKit } = teamKits(normalizedTeam);
+          return {
+            ...normalizedTeam,
+            kitVariant: normalizedTeam.kitVariant ?? 'home',
+            homeKit,
+            awayKit,
+            showBadge: normalizedTeam.showBadge ?? true,
+            showNumbers: normalizedTeam.showNumbers ?? true,
+            showNames: normalizedTeam.showNames ?? true,
+            squad: normalizedTeam.squad.map(player => ({ ...player, showNumber: player.showNumber ?? true })),
+          };
+        }),
         drawings: state.project.drawings.map(drawing => ({ ...drawing, fillPattern: drawing.fillPattern ?? 'diagonal' })),
       },
       tool: 'select',
