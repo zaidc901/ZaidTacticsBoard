@@ -64,6 +64,10 @@ Open the printed Vite URL in your browser.
 npm run build
 ```
 
+## Stretford Gauntlet
+
+The home screen links to the standalone game in `public/stretfordgauntlet/`. Vite copies that folder into `dist/stretfordgauntlet/`, so GitHub Pages serves it at `https://zaidtacticsboard.com/stretfordgauntlet/`. Both the slash and no-slash URLs resolve to the game. Its own styles and scripts are isolated from the tactics board, and its header links back to the home screen.
+
 ## Usage Guide
 
 1. Use the bottom dock tabs to edit the page, squads, preset teams, selected players, scenes, and exports.

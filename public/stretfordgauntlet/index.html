@@ -1,0 +1,97 @@
+<!doctype html>
+<html lang="en-GB">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <meta name="theme-color" content="#111820">
+  <meta name="description" content="Draft an all-time Manchester United XI and take on ten legendary United sides. One defeat and your run is over.">
+  <title>The Stretford Gauntlet — draft a Manchester United XI</title>
+  <link rel="icon" type="image/svg+xml" href="favicon.svg">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Barlow+Condensed:wght@600;800&family=Barlow:wght@400;600;700&family=Space+Grotesk:wght@400;500;600;700&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="styles.css">
+  <link rel="stylesheet" href="polish.css">
+  <script src="data.js" defer></script>
+  <script src="game.js" defer></script>
+</head>
+<body>
+  <div class="wrap">
+    <header class="top">
+      <div class="brand"><span class="brand-mark" aria-hidden="true">SG<span>77</span></span><div><div class="eyebrow">OLD TRAFFORD / THE DRAFT ROOM</div><h1>STRETFORD <span>GAUNTLET</span></h1></div></div>
+      <div class="top-right"><a class="top-link" href="/">← Zaid Tactics Board</a><div class="sub"><span class="live-dot"></span> Eleven players. Ten historic opponents. One run.</div></div>
+    </header>
+
+    <main>
+      <section class="screen on" id="s-setup">
+        <div class="setup">
+          <div class="resume" id="resume"><div><b>You have a run in progress</b><span id="resume-desc"></span></div><div class="actions"><button class="btn" id="resume-go">Resume run</button><button class="btn ghost" id="resume-drop">Abandon it</button></div></div>
+          <div class="setup-intro"><div class="eyebrow">01 / BUILD THE SIDE</div><h2>YOUR UNITED XI.<br><em>ONE WAY THROUGH.</em></h2><p class="rules">Draft eleven players from fourteen spins, then face ten historic United sides. Shared playing time strengthens chemistry; wrong positions and poor links lower your rating. Heroes and partnerships bring bonuses. Win a match to choose a new boost for your run.</p><div class="steps"><span><b>01</b> Choose manager</span><span><b>02</b> Draft XI</span><span><b>03</b> Wildcard</span><span><b>04</b> Survive ten matches</span></div></div>
+          <div class="setup-grid"><div class="setup-controls">
+            <div><h3>Eras in the draft pool</h3><div class="eras" id="eras"></div><div class="note" id="eranote"></div></div>
+            <div><h3>Formation</h3><div class="formations" id="formations"></div></div>
+            <div class="modes"><h3>Mode</h3><button class="chip" id="hardcore" aria-pressed="false">Hardcore — hide ratings and chemistry</button></div>
+            <div class="actions"><button class="btn" id="start">Start the draft <span aria-hidden="true">↗</span></button><button class="btn ghost" id="daily">Daily challenge</button></div>
+            <div class="note" id="dailynote"></div>
+          </div><aside class="setup-sidebar">
+            <div class="sidebar-head"><span class="eyebrow">THE RUN</span><b>10 MATCHES</b></div>
+            <details><summary>The opponents and their traits</summary><div class="opplist" id="opplist"></div></details>
+            <div class="stats" id="stats"></div>
+            <div><h3>Recent runs</h3><div class="hist" id="hist"></div></div>
+            <details><summary>Achievements</summary><div class="ach" id="ach"></div></details>
+          </aside></div>
+        </div>
+      </section>
+
+      <section class="screen" id="s-manager">
+        <div class="setup">
+          <h2>Pick your manager</h2>
+          <p class="rules">Choose before the draft. Every player you draft who played under him gets +12 chemistry and a small rating boost — they're marked M during the draft. Each manager brings his own style to the run.</p>
+          <div class="offers manager-offers" id="mgr-offers"></div>
+          <div class="mgrperks" id="mgr-perks"></div>
+          <div class="note" id="mgr-note"></div>
+          <div class="actions"><button class="btn" id="mgr-go" disabled>Start the draft</button></div>
+        </div>
+      </section>
+
+      <section class="screen" id="s-draft">
+        <div class="draft">
+          <div><div class="pitchwrap" id="pitch"><svg class="lines" viewBox="0 0 100 125" preserveAspectRatio="none" aria-hidden="true"><rect x="2" y="2" width="96" height="121"/><rect x="22" y="103" width="56" height="20"/><rect x="36" y="115" width="28" height="8"/><path d="M2 2 A40 40 0 0 0 42 2 M98 2 A40 40 0 0 1 58 2 M36 103 A14 14 0 0 1 64 103"/></svg><svg class="links" id="links" viewBox="0 0 100 100" preserveAspectRatio="none" aria-hidden="true"></svg><div id="slots"></div></div></div>
+          <div class="panel">
+            <div class="stat"><div><small>Team rating</small><b id="st-rating">–</b></div><div><small>Chemistry</small><b id="st-chem">–</b></div><div><small>Players</small><b id="st-n">0/11</b></div></div>
+            <div class="rating-breakdown" id="st-breakdown"></div>
+            <div class="link-guide"><span><i class="strong"></i> Strong link</span><span><i class="partial"></i> Partial link</span><span><i class="weak"></i> No shared time</span></div>
+            <div class="tray"><div class="trayhead"><div class="spins">Spin <span id="spin-n">1</span> of 14</div><button class="btn ghost" id="skip">Skip all three</button></div><div class="offers" id="offers"></div><div class="note" id="note">Pick a player, then tap a slot on the pitch.</div></div>
+            <div class="note" id="perks"></div>
+            <div class="actions"><button class="btn" id="finish" disabled>Done — to the wildcard</button></div>
+            <div class="detail" id="detail"></div>
+            <details><summary class="small-summary">Who you'll face</summary><div class="opplist" id="opplist2"></div></details>
+          </div>
+        </div>
+      </section>
+
+      <section class="screen" id="s-wild">
+        <div class="wild-content">
+          <h2>Wildcard sub</h2>
+          <p class="rules">One last spin: three players rated 88 or higher. Your chosen eras come first; if fewer than three elite players remain, the wildcard reaches across eras. Pick one to replace anyone in your XI — or keep the side you've built.</p>
+          <div class="offers wild-offers" id="wild-offers"></div>
+          <div class="note" id="wild-note">Pick a wildcard, then choose who he replaces on the pitch. You can also keep your XI.</div>
+          <div class="actions wildcard-actions" id="wild-actions" hidden><button class="btn ghost" id="wild-cancel" hidden>Cancel selection</button><button class="btn ghost" id="wild-undo" hidden>Undo substitution</button></div>
+          <div class="draft"><div><div class="pitchwrap" id="wild-pitch"></div></div><div class="panel"><div class="stat"><div><small>Team rating</small><b id="w-rating">–</b></div><div><small>Chemistry</small><b id="w-chem">–</b></div><div><small>Change</small><b id="w-delta">–</b></div></div><div class="rating-breakdown" id="w-breakdown"></div><div class="actions"><button class="btn" id="wild-go">Enter the gauntlet</button></div></div></div>
+        </div>
+      </section>
+
+      <section class="screen" id="s-gauntlet">
+        <div class="gauntlet">
+          <div><div class="stat"><div><small>Your team rating</small><b id="g-rating">–</b></div></div><div class="rating-breakdown" id="g-breakdown"></div><div class="run-perks" id="run-perks"></div><div class="ladder" id="ladder"></div><div class="actions"><button class="btn ghost" id="reshape">Change formation (once per run)</button></div><div id="reshape-panel" hidden><div class="formations" id="reshape-forms"></div><div class="pitchwrap" id="reshape-pitch"></div><div class="note" id="reshape-note"></div><div class="actions"><button class="btn" id="reshape-ok">Confirm</button><button class="btn ghost" id="reshape-cancel">Cancel</button></div></div></div>
+          <div><div class="matchcard"><div class="vs"><div class="t">Your XI<small id="g-mgr"></small></div><div class="sc" id="score">0–0</div><div class="t" id="opp-name">–<small id="opp-mgr"></small></div></div><div class="clock" id="clock">Kick-off</div><div class="oppxi" id="opp-xi"></div><div class="trait" id="trait"></div><div class="log" id="log" aria-live="polite"></div><div class="after" id="after"><button class="btn" id="kickoff">Kick off</button><button class="btn ghost" id="skipsim" hidden>Skip to full-time</button></div></div></div>
+        </div>
+      </section>
+
+      <section class="screen" id="s-result"><div class="result"><figure class="lineup-figure"><canvas id="card" width="1080" height="1460" aria-label="Your final Manchester United lineup and gauntlet result"></canvas><figcaption>Your final XI, positions and links are included in the image.</figcaption></figure><div class="share"><h2 id="r-title">Run over</h2><div class="note" id="r-sub"></div><div class="detail on" id="verdict"></div><div class="lineup-summary" id="result-lineup"></div><textarea id="r-text" readonly aria-label="Shareable result"></textarea><div class="actions"><button class="btn" id="share-image">Share lineup image</button><button class="btn ghost" id="copy">Copy result</button><button class="btn ghost" id="save">Save lineup image</button><button class="btn ghost" id="copyfull">Copy full breakdown</button></div><div class="note" id="savetip"></div><div id="newach"></div><button class="btn ghost" id="again">Play again</button></div></div></section>
+    </main>
+
+    <footer class="foot"><span>Unofficial fan project — not affiliated with or endorsed by Manchester United FC. <small class="inspiration">Inspired by <a href="https://kopgauntlet.com/" target="_blank" rel="noopener noreferrer">Kop Gauntlet</a>.</small></span><span class="meta">The Stretford Gauntlet · v1.0</span></footer>
+  </div>
+</body>
+</html>

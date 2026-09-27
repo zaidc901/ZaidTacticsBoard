@@ -1,4 +1,4 @@
-import { AlertTriangle, ArrowRight, Film, PenTool, Video } from 'lucide-react';
+import { AlertTriangle, ArrowRight, Film, Gamepad2, PenTool, Video } from 'lucide-react';
 
 type StudioHomeProps = {
   onOpenBoard: () => void;
@@ -46,6 +46,22 @@ export function StudioHome({ onOpenBoard, onOpenVideo }: StudioHomeProps) {
               Open WIP tool <Film size={16} />
             </span>
           </button>
+
+          <a href="/stretfordgauntlet/" className="group flex flex-col justify-between gap-6 rounded-2xl border border-red-400/35 bg-[linear-gradient(115deg,rgba(127,29,29,.45),rgba(15,23,42,.96)_65%)] p-4 text-left shadow-[0_20px_58px_rgba(2,6,23,.24)] transition hover:-translate-y-1 hover:border-red-300 hover:bg-red-950/55 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-red-300 sm:flex-row sm:items-center sm:p-6 md:col-span-2">
+            <span className="flex min-w-0 items-start gap-4">
+              <span className="grid h-14 w-14 shrink-0 place-items-center rounded-xl bg-red-700 text-white shadow-[0_14px_30px_rgba(185,28,28,.25)]">
+                <Gamepad2 size={28} aria-hidden="true" />
+              </span>
+              <span className="block min-w-0">
+                <span className="block text-[10px] font-black uppercase tracking-[0.18em] text-red-200">Manchester United draft game</span>
+                <span className="mt-1 block text-2xl font-black tracking-normal text-white">The Stretford Gauntlet</span>
+                <span className="mt-2 block max-w-xl text-sm font-semibold leading-6 text-slate-300">Build your all-time United XI and take on ten historic sides. One defeat ends the run.</span>
+              </span>
+            </span>
+            <span className="inline-flex h-10 shrink-0 items-center justify-center gap-2 self-start rounded-lg bg-red-700 px-4 text-sm font-black text-white transition group-hover:bg-red-600 sm:self-auto">
+              Play the gauntlet <ArrowRight size={16} aria-hidden="true" />
+            </span>
+          </a>
         </section>
       </main>
     </div>
