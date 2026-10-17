@@ -1,9 +1,15 @@
+import { StudioLogo } from './StudioLogo';
+import { useShallow } from 'zustand/react/shallow';
 import { memo, RefObject, useMemo, useRef, useState, useEffect } from 'react';
 import { Copy, Home, Mail, Moon, Share2, Sun, Video, X } from 'lucide-react';
 import { Stage, Layer, Rect, Line, Circle, Text, Group, Arrow, Image as KonvaImage } from 'react-konva';
 import Konva from 'konva';
 import { flagImageUrlByPresetId, teamPresetById } from '../data/teamPresets';
 import { useMediaQuery } from '../hooks/useMediaQuery';
+import { BoardToolbox, PitchScaleControl, QuickActions } from './ControlDock';
+import { boardDragMoved, constrainBoardMove } from '../utils/boardInteraction';
+import { boardCanvasPixelRatio, boardFitZoom, boardZoomBaseline } from '../utils/boardZoom';
+import { trackBoardPointer } from '../utils/boardPointer';
 import { useTacticsStore } from '../store/tacticsStore';
 import { Ball, BallDesign, Drawing, FillPattern, PlaybackDrawing, Player, Team, ToolStyle } from '../types/domain';
 
@@ -98,7 +104,8 @@ function useElementSize<T extends HTMLElement>() {
   useEffect(() => {
     if (!ref.current) return;
     const observer = new ResizeObserver(([entry]) => {
-      const next = { width: entry.contentRect.width, height: entry.contentRect.height };
+      const box = entry.target.getBoundingClientRect();
+      const next = { width: box.width, height: box.height };
       setSize(current => current.width === next.width && current.height === next.height ? current : next);
     });
     observer.observe(ref.current);
@@ -158,7 +165,7 @@ function GridOverlay({ mapper, landscape }: { mapper: Mapper; landscape: boolean
   </Group>;
 }
 
-function Pitch({ width, height, mapper }: { width: number; height: number; mapper: Mapper }) {
+function PitchBackground({ width, height, mapper }: { width: number; height: number; mapper: Mapper }) {
   const settings = useTacticsStore(s => s.project.settings);
   const landscape = settings.format === 'landscape';
   const { x, y, width: pw, height: ph } = mapper.pitch;
@@ -232,6 +239,8 @@ function Pitch({ width, height, mapper }: { width: number; height: number; mappe
   </Group>;
 }
 
+const Pitch = memo(PitchBackground);
+
 function CountryFlag({ flagId, radius }: { flagId: string; radius: number }) {
   const preset = teamPresetById[flagId] ?? teamPresetById.iraq;
   const image = useLoadedImage(flagImageUrlByPresetId[preset.id]);
@@ -304,19 +313,15 @@ const PlayerMarker = memo(function PlayerMarker({ player, mapper }: { player: Pl
 
 type FieldPlayerDrag = { teamId: string; playerIds: string[] };
 
-function BenchTray({ team, side, fieldPlayerDrag, onReceivePlayers }: { team: Team; side: 'left' | 'right'; fieldPlayerDrag: FieldPlayerDrag | null; onReceivePlayers: (teamId: string) => void }) {
-  const { selectedIds, select, playing } = useTacticsStore();
+function BenchTray({ team, side, fieldPlayerDrag }: { team: Team; side: 'left' | 'right'; fieldPlayerDrag: FieldPlayerDrag | null }) {
+  const { selectedIds, select, playing } = useTacticsStore(useShallow(state => ({ selectedIds: state.selectedIds, select: state.select, playing: state.playing })));
   const players = team.squad.filter(player => !player.starter || player.hidden);
   const sideClass = side === 'left' ? 'left-2 sm:left-3' : 'right-2 sm:right-3';
   const receiving = fieldPlayerDrag?.teamId === team.id;
   const teamTextColor = readableTextColor(team.primaryColor);
   return <aside
-    onMouseUp={event => {
-      if (!receiving) return;
-      event.preventDefault();
-      event.stopPropagation();
-      onReceivePlayers(team.id);
-    }}
+    data-bench-team={team.id}
+    data-empty={players.length === 0}
     className={`bench-tray bench-tray-${side} pointer-events-auto absolute top-[4.25rem] z-30 flex max-h-[min(58dvh,27rem)] w-[4.5rem] flex-col overflow-hidden rounded-xl border bg-white/95 shadow-[0_12px_34px_rgba(11,23,42,.22)] backdrop-blur-md transition sm:w-24 ${receiving ? 'scale-[1.04] border-[#06b6d4] ring-4 ring-[#22d3ee]/30' : ''} ${sideClass}`}
     style={{ borderColor: receiving ? '#06b6d4' : team.primaryColor }}
   >
@@ -679,57 +684,14 @@ function MannequinFigure({ x, y, width, height, fill, stroke }: { x: number; y: 
 }
 
 function DrawingShape({ drawing, mapper, interactive = true }: { drawing: PlaybackDrawing; mapper: Mapper; interactive?: boolean }) {
-  const { select, toggleSelection, selectedIds, moveSelectedItems } = useTacticsStore();
+  const selectedIds = useTacticsStore(state => state.selectedIds);
   const pitchLineColor = useTacticsStore(state => state.project.settings.lineColor);
   const pitchLineWidth = useTacticsStore(state => state.project.settings.lineThickness);
-  const dragRef = useRef<{ ids: string[]; x: number; y: number } | null>(null);
   const selected = interactive && selectedIds.includes(drawing.id);
   const transitionVisibility = drawing.transitionVisibility ?? 1;
   const stageManaged = drawing.type === 'zone' || drawing.type === 'circle-zone' || drawing.type === 'polygon-zone';
   if (drawing.hidden) return null;
-  const onSelect = interactive ? (e: Konva.KonvaEventObject<MouseEvent | TouchEvent>) => {
-    e.cancelBubble = true;
-    const native = e.evt;
-    if ('button' in native && native.button !== 0) return;
-    if (('ctrlKey' in native && native.ctrlKey) || ('metaKey' in native && native.metaKey)) toggleSelection(drawing.id);
-    else select(drawing.id);
-  } : undefined;
-  const interactionProps = {
-    name: 'board-item',
-    onClick: onSelect,
-    onTap: onSelect,
-    listening: interactive && !stageManaged,
-    draggable: interactive && !stageManaged && !drawing.locked,
-    dragDistance: 5,
-    onMouseMove: (event: Konva.KonvaEventObject<MouseEvent>) => {
-      const stage = event.target.getStage();
-      if (stage && interactive) stage.container().style.cursor = 'grab';
-    },
-    onDragStart: (event: Konva.KonvaEventObject<DragEvent>) => {
-      event.cancelBubble = true;
-      const state = useTacticsStore.getState();
-      const ids = state.selectedIds.includes(drawing.id) ? state.selectedIds : [drawing.id];
-      if (!state.selectedIds.includes(drawing.id)) state.select(drawing.id);
-      const node = event.currentTarget as Konva.Group;
-      dragRef.current = { ids, x: node.x(), y: node.y() };
-      const stage = event.target.getStage();
-      if (stage) stage.container().style.cursor = 'grabbing';
-    },
-    onDragMove: (event: Konva.KonvaEventObject<DragEvent>) => {
-      event.cancelBubble = true;
-    },
-    onDragEnd: (event: Konva.KonvaEventObject<DragEvent>) => {
-      if (!dragRef.current) return;
-      const node = event.currentTarget as Konva.Group;
-      const dx = (node.x() - dragRef.current.x) / mapper.pitch.width;
-      const dy = (node.y() - dragRef.current.y) / mapper.pitch.height;
-      node.position({ x: dragRef.current.x, y: dragRef.current.y });
-      if (dx || dy) moveSelectedItems(dragRef.current.ids, dx, dy);
-      dragRef.current = null;
-      const stage = event.target.getStage();
-      if (stage) stage.container().style.cursor = 'grab';
-    },
-  };
+  const interactionProps = { name: 'board-item', listening: interactive && !stageManaged };
   const selectionStroke = '#2563eb';
   const stroke = drawing.color;
   const curvePoints = drawing.type === 'arrow' || drawing.type === 'long-pass' || drawing.type === 'curve'
@@ -752,7 +714,6 @@ function DrawingShape({ drawing, mapper, interactive = true }: { drawing: Playba
           {selected && <Rect x={-2} y={-2} width={absWidth + 4} height={absHeight + 4} stroke={selectionStroke} strokeWidth={1.5} opacity={0.5} dash={[7, 6]} cornerRadius={12} />}
           <Rect width={absWidth} height={absHeight} stroke={stroke} strokeWidth={drawing.strokeWidth} opacity={Math.max(0.72, drawing.opacity)} dash={drawing.dashed ? [14, 10] : undefined} cornerRadius={10} />
         </Group>
-        <Rect key="area-hit-target" name="area-hit-target" x={-20} y={-20} width={absWidth + 40} height={absHeight + 40} fill="#ffffff" opacity={0.001} cornerRadius={22} />
       </Group>
     </>;
   }
@@ -772,7 +733,6 @@ function DrawingShape({ drawing, mapper, interactive = true }: { drawing: Playba
           {selected && <Circle radius={radius + 2} stroke={selectionStroke} strokeWidth={1.5} opacity={0.5} dash={[7, 6]} />}
           <Circle radius={radius} stroke={stroke} strokeWidth={drawing.strokeWidth} opacity={Math.max(0.72, drawing.opacity)} dash={drawing.dashed ? [14, 10] : undefined} />
         </Group>
-        <Circle key="area-hit-target" name="area-hit-target" radius={radius + 20} fill="#ffffff" opacity={0.001} />
       </Group>
     </>;
   }
@@ -859,7 +819,6 @@ function DrawingShape({ drawing, mapper, interactive = true }: { drawing: Playba
           {selected && <Line points={localPoints} closed stroke={selectionStroke} strokeWidth={drawing.strokeWidth + 3} opacity={0.38} dash={[7, 6]} lineJoin="round" />}
           <Line points={localPoints} closed stroke={stroke} strokeWidth={drawing.strokeWidth} opacity={Math.max(0.72, drawing.opacity)} dash={drawing.dashed ? [14, 10] : undefined} lineJoin="round" />
         </Group>
-        <Line key="area-hit-target" name="area-hit-target" points={localPoints} closed fill="#ffffff" stroke="#ffffff" opacity={0.001} strokeWidth={40} hitStrokeWidth={40} lineJoin="round" />
       </Group>
     </>;
   }
@@ -1019,8 +978,33 @@ function pointHitsArea(drawing: Drawing, rel: { x: number; y: number }, mapper: 
 type BoardDragSession = {
   ids: string[];
   start: { x: number; y: number };
+  current: { x: number; y: number };
+  fieldPlayers?: FieldPlayerDrag;
   moved: boolean;
+  reactPreview: boolean;
+  lifted: boolean;
+  nodes: { node: Konva.Node; x: number; y: number; parent: Konva.Container | null; index: number }[];
 };
+
+function restoreDragNodes(session: BoardDragSession | null, offset = { x: 0, y: 0 }) {
+  if (!session) return;
+  const layers = new Set<Konva.Layer>();
+  session.nodes.slice().sort((a, b) => a.index - b.index).forEach(({ node, x, y, parent, index }) => {
+    const layer = node.getLayer();
+    if (layer) layers.add(layer);
+    // Drawing groups commit movement through their child geometry, whereas
+    // players and the ball commit their node position.
+    const nodeOffset = node.id().startsWith('drawing-node-') ? { x: 0, y: 0 } : offset;
+    node.position({ x: x + nodeOffset.x, y: y + nodeOffset.y });
+    if (parent && node.getParent() !== parent) {
+      node.moveTo(parent);
+      node.zIndex(index);
+      const originalLayer = node.getLayer();
+      if (originalLayer) layers.add(originalLayer);
+    }
+  });
+  layers.forEach(layer => layer.batchDraw());
+}
 
 type BoardDragPreview = {
   ids: string[];
@@ -1054,41 +1038,31 @@ function previewTranslatedDrawing(drawing: Drawing, dx: number, dy: number) {
   return { ...drawing, points };
 }
 
-function ManagedBoardHitTargets({ players, ball, drawings, mapper }: { players: Player[]; ball: Ball; drawings: Drawing[]; mapper: Mapper }) {
-  return <>
-    {drawings.filter(drawing => !drawing.hidden).map(drawing => {
-      if (drawing.type === 'zone') {
-        const [x, y, width, height] = drawing.points;
-        const start = mapper.toAbs(x, y);
-        const end = mapper.toAbs(x + width, y + height);
-        return <Rect key={drawing.id} x={Math.min(start[0], end[0])} y={Math.min(start[1], end[1])} width={Math.abs(end[0] - start[0])} height={Math.abs(end[1] - start[1])} fill="#ffffff" opacity={0.001} />;
-      }
-      if (drawing.type === 'circle-zone') {
-        const start = mapper.toAbs(drawing.points[0], drawing.points[1]);
-        const end = mapper.toAbs(drawing.points[2], drawing.points[3]);
-        return <Circle key={drawing.id} x={(start[0] + end[0]) / 2} y={(start[1] + end[1]) / 2} radius={Math.hypot(end[0] - start[0], end[1] - start[1]) / 2} fill="#ffffff" opacity={0.001} />;
-      }
-      if (drawing.type === 'polygon-zone') {
-        const points = drawing.points.flatMap((point, index, all) => index % 2 === 0 ? mapper.toAbs(point, all[index + 1]) : []);
-        return <Line key={drawing.id} points={points} closed fill="#ffffff" opacity={0.001} />;
-      }
-      return null;
-    })}
-    {players.filter(player => player.starter && !player.hidden).map(player => {
-      const [x, y] = mapper.toAbs(player.x, player.y);
-      const radius = baseMarkerRadius * clampRange(player.size ?? 1, 0.65, 1.65) + 10;
-      return <Circle key={player.id} x={x} y={y} radius={radius} fill="#ffffff" opacity={0.001} />;
-    })}
-    {(() => {
-      const [x, y] = mapper.toAbs(ball.x, ball.y);
-      const radius = Math.max(22, ball.size / 2 + 10.5);
-      return <Circle key="ball" x={x} y={y} radius={radius} fill="#ffffff" opacity={0.001} />;
-    })()}
-  </>;
-}
-
 export function PitchCanvas({ stageRef, onHome, onOpenVideo }: { stageRef: RefObject<Konva.Stage | null>; onHome?: () => void; onOpenVideo?: () => void }) {
-  const { project, selectedIds, tool, toolStyle, viewZoom, dockPosition, dockTab, playbackFrame, playing, addDrawing, placePlayer, select, toggleSelection, setSelection, checkpointHistory, moveSelectedItems, commitDrawingUpdate, setPlayerStarter, setTool, setDockTab, setDockPosition, updateSettings } = useTacticsStore();
+  const { project, selectedIds, tool, toolStyle, viewZoom, dockPosition, dockTab, playbackFrame, playing, addDrawing, placePlayer, select, toggleSelection, setSelection, checkpointHistory, moveSelectedItems, commitDrawingUpdate, setPlayerStarter, setTool, setDockTab, setDockPosition, updateSettings } = useTacticsStore(useShallow(state => ({
+    project: state.project,
+    selectedIds: state.selectedIds,
+    tool: state.tool,
+    toolStyle: state.toolStyle,
+    viewZoom: state.viewZoom,
+    dockPosition: state.dockPosition,
+    dockTab: state.dockTab,
+    playbackFrame: state.playbackFrame,
+    playing: state.playing,
+    addDrawing: state.addDrawing,
+    placePlayer: state.placePlayer,
+    select: state.select,
+    toggleSelection: state.toggleSelection,
+    setSelection: state.setSelection,
+    checkpointHistory: state.checkpointHistory,
+    moveSelectedItems: state.moveSelectedItems,
+    commitDrawingUpdate: state.commitDrawingUpdate,
+    setPlayerStarter: state.setPlayerStarter,
+    setTool: state.setTool,
+    setDockTab: state.setDockTab,
+    setDockPosition: state.setDockPosition,
+    updateSettings: state.updateSettings,
+  })));
   const [draft, setDraft] = useState<{ id: string; start: number[]; current: number[] } | null>(null);
   const [selection, setSelectionBox] = useState<{ start: number[]; current: number[] } | null>(null);
   const [boardDragPreview, setBoardDragPreview] = useState<BoardDragPreview | null>(null);
@@ -1097,40 +1071,60 @@ export function PitchCanvas({ stageRef, onHome, onOpenVideo }: { stageRef: RefOb
   const [shareDone, setShareDone] = useState(false);
   const [contactOpen, setContactOpen] = useState(false);
   const [emailCopied, setEmailCopied] = useState(false);
+  const activePointerRef = useRef<number | null>(null);
   const pointerFrameRef = useRef<number | null>(null);
   const boardDragFrameRef = useRef<number | null>(null);
   const pendingPointerRef = useRef<{ x: number; y: number } | null>(null);
   const pendingBoardDragRef = useRef<BoardDragPreview | null>(null);
   const boardDragRef = useRef<BoardDragSession | null>(null);
+  const stopPointerTrackingRef = useRef<(() => void) | null>(null);
+  const pointerCaptureRef = useRef<HTMLElement | null>(null);
+  const dragLayerRef = useRef<Konva.Layer | null>(null);
   const curveDragRef = useRef<CurveDragSession | null>(null);
   const { ref: containerRef, size } = useElementSize<HTMLDivElement>();
   const { width, height, format } = project.settings;
   const dark = project.settings.theme === 'dark';
   const touchCanvas = useMediaQuery('(pointer: coarse), (max-width: 767px)');
   const compactCanvas = useMediaQuery('(max-width: 640px)');
-  const canvasPixelRatio = useMemo(() => {
-    const deviceRatio = typeof window === 'undefined' ? 1 : window.devicePixelRatio || 1;
-    return Math.min(deviceRatio, touchCanvas ? 1 : 1.5);
-  }, [touchCanvas]);
   const pitchScaleX = project.settings.pitchScaleX ?? 1;
   const pitchScaleY = project.settings.pitchScaleY ?? 1;
   const mapper = useMemo(() => makeMapper(width, height, pitchScaleX, pitchScaleY, format === 'landscape'), [format, height, pitchScaleX, pitchScaleY, width]);
   const scale = useMemo(() => {
-    const edgePadding = compactCanvas ? 12 : touchCanvas ? 20 : 44;
-    const usableWidth = Math.max(240, size.width - edgePadding);
-    const usableHeight = Math.max(220, size.height - edgePadding);
-    const fitContain = Math.min(usableWidth / width, usableHeight / height);
-    const widthFit = usableWidth / width;
-    const effectiveZoom = touchCanvas ? viewZoom : Math.min(viewZoom, 1.35);
-    const base = format === 'portrait'
-      ? touchCanvas ? Math.min(widthFit * 1.08, fitContain * 1.42) : widthFit * 0.64
-      : fitContain * (touchCanvas ? 1.18 : 1.3);
-    return clampRange(base * effectiveZoom, 0.16, touchCanvas ? 2.6 : 1.75);
-  }, [compactCanvas, format, height, size.height, size.width, touchCanvas, viewZoom, width]);
+    const edgePadding = compactCanvas ? 16 : 40;
+    const usableWidth = Math.max(100, size.width - edgePadding);
+    const usableHeight = Math.max(100, size.height - edgePadding);
+    return Math.max(0.05, Math.min(usableWidth / width, usableHeight / height));
+  }, [compactCanvas, height, size.height, size.width, width]);
+  const stageScale = useMemo(() => ({ x: scale, y: scale }), [scale]);
+  const magnification = viewZoom * boardZoomBaseline(format);
+  const displayScale = scale * magnification;
+  const canvasPixelRatio = boardCanvasPixelRatio(width * scale, height * scale, magnification, window.devicePixelRatio || 1, touchCanvas);
 
-  const pointerRel = (stage: Konva.Stage) => {
+  useEffect(() => {
+    // Zoom stays on the compositor while a slider is moving. Redraw vectors at
+    // the displayed resolution once it settles, rather than stretching pixels.
+    const timer = setTimeout(() => {
+      stageRef.current?.getLayers().forEach(layer => {
+        if (Math.abs(layer.getCanvas().getPixelRatio() - canvasPixelRatio) < .01) return;
+        layer.getCanvas().setPixelRatio(canvasPixelRatio);
+        layer.draw();
+      });
+    }, 120);
+    return () => clearTimeout(timer);
+  }, [canvasPixelRatio, stageRef]);
+
+  useEffect(() => {
+    const viewport = containerRef.current;
+    if (viewport) {
+      viewport.scrollLeft = Math.max(0, (viewport.scrollWidth - viewport.clientWidth) / 2);
+      viewport.scrollTop = Math.max(0, (viewport.scrollHeight - viewport.clientHeight) / 2);
+    }
+  }, [scale, magnification]);
+
+  const pointerRel = (stage: Konva.Stage, bounded = true) => {
     const p = stage.getPointerPosition() ?? { x: 0, y: 0 };
-    return mapper.toRel(p.x / scale, p.y / scale);
+    const rel = { x: (p.x / scale - mapper.pitch.x) / mapper.pitch.width, y: (p.y / scale - mapper.pitch.y) / mapper.pitch.height };
+    return bounded ? { x: clamp01(rel.x), y: clamp01(rel.y) } : rel;
   };
   const canDraw = tool !== 'select';
   const boardInteractive = !canDraw && !playing;
@@ -1173,6 +1167,10 @@ export function PitchCanvas({ stageRef, onHome, onOpenVideo }: { stageRef: RefOb
   const draftDrawing = draft && canDraw ? buildDrawing(tool, draft.start, draft.current, toolStyle, draft.id) : null;
 
   useEffect(() => {
+    stopPointerTrackingRef.current?.();
+    stopPointerTrackingRef.current = null;
+    restoreDragNodes(boardDragRef.current);
+    activePointerRef.current = null;
     setDraft(null);
     setSelectionBox(null);
     setBoardDragPreview(null);
@@ -1188,17 +1186,18 @@ export function PitchCanvas({ stageRef, onHome, onOpenVideo }: { stageRef: RefOb
     pendingBoardDragRef.current = null;
     const stage = stageRef.current;
     if (stage) stage.container().style.cursor = tool === 'select' ? 'default' : 'crosshair';
-  }, [tool]);
+  }, [tool, playing, scale]);
 
   useEffect(() => {
     const cancelTool = (event: KeyboardEvent) => {
-      if (event.key === 'Escape') setTool('select');
+      if (event.key === 'Escape') { cancelInteraction(); setTool('select'); }
     };
     window.addEventListener('keydown', cancelTool);
     return () => window.removeEventListener('keydown', cancelTool);
   }, [setTool]);
 
   useEffect(() => () => {
+    stopPointerTrackingRef.current?.();
     if (pointerFrameRef.current !== null) cancelAnimationFrame(pointerFrameRef.current);
     if (boardDragFrameRef.current !== null) cancelAnimationFrame(boardDragFrameRef.current);
   }, []);
@@ -1208,12 +1207,11 @@ export function PitchCanvas({ stageRef, onHome, onOpenVideo }: { stageRef: RefOb
     if (canDraw) setDraft({ id: crypto.randomUUID(), start: [rel.x, rel.y], current: [rel.x, rel.y] });
     else setSelectionBox({ start: [rel.x, rel.y], current: [rel.x, rel.y] });
   };
-  const beginBoardItemAt = (stage: Konva.Stage, native: MouseEvent | TouchEvent) => {
-    if (canDraw || playing) return false;
-    const rel = pointerRel(stage);
+  const boardItemAt = (stage: Konva.Stage) => {
+    const rel = pointerRel(stage, false);
     const pointer = mapper.toAbs(rel.x, rel.y);
     const ballCenter = mapper.toAbs(displayBall.x, displayBall.y);
-    const ballRadius = Math.max(22, displayBall.size / 2 + 10.5);
+    const ballRadius = Math.max((touchCanvas ? 16 : 12) / displayScale, displayBall.size / 2 + 10.5);
     const ball = Math.hypot(pointer[0] - ballCenter[0], pointer[1] - ballCenter[1]) <= ballRadius
       ? { id: 'ball', locked: displayBall.locked }
       : undefined;
@@ -1221,19 +1219,32 @@ export function PitchCanvas({ stageRef, onHome, onOpenVideo }: { stageRef: RefOb
       .filter(candidate => candidate.starter && !candidate.hidden)
       .map(candidate => {
         const center = mapper.toAbs(candidate.x, candidate.y);
-        const radius = baseMarkerRadius * clampRange(candidate.size ?? 1, 0.65, 1.65) + 10;
-        return { player: candidate, distance: Math.hypot(pointer[0] - center[0], pointer[1] - center[1]), radius };
+        const markerSize = clampRange(candidate.size ?? 1, 0.65, 1.65);
+        const markerRadius = baseMarkerRadius * markerSize;
+        const radius = Math.max((touchCanvas ? 20 : 12) / displayScale, markerRadius + 13);
+        const team = project.teams.find(team => team.id === candidate.teamId);
+        const nameHit = (team?.showNames ?? true) && candidate.displayName.trim().length > 0
+          && Math.abs(pointer[0] - center[0]) <= Math.max(88, 108 * markerSize) / 2
+          && pointer[1] >= center[1] + markerRadius + 6 && pointer[1] <= center[1] + markerRadius + 31;
+        return { player: candidate, distance: Math.hypot(pointer[0] - center[0], pointer[1] - center[1]), radius, nameHit };
       })
-      .filter(candidate => candidate.distance <= candidate.radius)
+      .filter(candidate => candidate.distance <= candidate.radius || candidate.nameHit)
       .sort((a, b) => a.distance - b.distance || b.player.zIndex - a.player.zIndex)[0]?.player;
     const area = ball || player ? undefined : sortedDrawings
       .slice()
       .reverse()
       .find(drawing => pointHitsArea(drawing, rel, mapper));
-    const item = ball ?? player ?? area;
+    const hit = ball || player ? undefined : stage.getIntersection(stage.getPointerPosition()!);
+    const drawingNode = hit?.findAncestor((node: Konva.Node) => node.id().startsWith('drawing-node-'), true);
+    const hitDrawing = drawingNode ? sortedDrawings.find(drawing => 'drawing-node-' + drawing.id === drawingNode.id()) : undefined;
+    return { item: ball ?? player ?? hitDrawing ?? area, player, rel };
+  };
+  const beginBoardItemAt = (stage: Konva.Stage, native: PointerEvent) => {
+    if (canDraw || playing) return false;
+    const { item, player, rel } = boardItemAt(stage);
     if (!item) return false;
 
-    const modifier = 'ctrlKey' in native && (native.ctrlKey || native.metaKey);
+    const modifier = native.ctrlKey || native.metaKey || native.shiftKey;
     if (modifier) {
       toggleSelection(item.id);
       setSelectionBox(null);
@@ -1241,64 +1252,96 @@ export function PitchCanvas({ stageRef, onHome, onOpenVideo }: { stageRef: RefOb
     }
 
     const state = useTacticsStore.getState();
-    const fixedFollowAreaIds = new Set(state.project.drawings
-      .filter(drawing => drawing.type === 'polygon-zone' && drawing.followPlayers)
-      .map(drawing => drawing.id));
-    const ids = (state.selectedIds.includes(item.id) ? state.selectedIds : [item.id])
-      .filter(itemId => !fixedFollowAreaIds.has(itemId));
     if (!state.selectedIds.includes(item.id)) select(item.id);
     setSelectionBox(null);
-    if (item.locked || fixedFollowAreaIds.has(item.id) || !ids.length) return true;
-
-    boardDragRef.current = { ids, start: rel, moved: false };
-    setBoardDragPreview({ ids, dx: 0, dy: 0 });
+    const ids = constrainBoardMove(state.project, state.selectedIds.includes(item.id) ? state.selectedIds : [item.id], 0, 0).ids;
+    if (item.locked || !ids.includes(item.id)) return true;
+    const nodes = ids.flatMap(id => {
+      const nodeId = id === 'ball' ? 'ball-node' : state.project.drawings.some(drawing => drawing.id === id) ? 'drawing-node-' + id : 'player-node-' + id;
+      const node = stage.findOne((candidate: Konva.Node) => candidate.id() === nodeId);
+      return node ? [{ node, x: node.x(), y: node.y(), parent: node.getParent(), index: node.zIndex() }] : [];
+    });
+    // Linked polygons need geometry updates; isolate this less common preview path.
+    const reactPreview = state.project.drawings.some(drawing => drawing.followPlayers && drawing.linkedPlayerIds?.some(id => ids.includes(id)));
+    const session: BoardDragSession = { ids, start: rel, current: rel, moved: false, nodes, reactPreview, lifted: false };
+    boardDragRef.current = session;
     if (player) {
       const team = state.project.teams.find(candidate => candidate.id === player.teamId);
       const playerIds = team?.squad
         .filter(candidate => candidate.starter && !candidate.hidden && ids.includes(candidate.id))
         .map(candidate => candidate.id) ?? [player.id];
-      setFieldPlayerDrag({ teamId: player.teamId, playerIds });
+      session.fieldPlayers = { teamId: player.teamId, playerIds };
+      setFieldPlayerDrag(session.fieldPlayers);
     } else {
       setFieldPlayerDrag(null);
     }
     stage.container().style.cursor = 'grab';
     return true;
   };
-  const moveBoardItemAt = (stage: Konva.Stage) => {
+  const moveBoardItemAt = (stage: Konva.Stage, rel = pointerRel(stage, false)) => {
     const session = boardDragRef.current;
     if (!session) return false;
-    const rel = pointerRel(stage);
-    const dx = rel.x - session.start.x;
-    const dy = rel.y - session.start.y;
-    if (Math.hypot(dx, dy) > 0.002) session.moved = true;
-    pendingBoardDragRef.current = { ids: session.ids, dx, dy };
+    session.current = rel;
+    const delta = { dx: rel.x - session.start.x, dy: rel.y - session.start.y };
+    if (boardDragMoved(session.start, rel, { width: mapper.pitch.width * displayScale, height: mapper.pitch.height * displayScale })) session.moved = true;
+    if (!session.moved) return true;
+    pendingBoardDragRef.current = constrainBoardMove(project, session.ids, delta.dx, delta.dy);
     if (boardDragFrameRef.current === null) {
       boardDragFrameRef.current = requestAnimationFrame(() => {
         boardDragFrameRef.current = null;
         const preview = pendingBoardDragRef.current;
-        if (preview && boardDragRef.current) setBoardDragPreview(preview);
+        if (!preview || boardDragRef.current !== session) return;
+        if (session.reactPreview) setBoardDragPreview(preview);
+        else {
+          const dragLayer = dragLayerRef.current;
+          const autoDraw = Konva.autoDrawEnabled;
+          const originalLayers = new Set<Konva.Layer>();
+          // Move only the dragged objects into a separate layer, then paint in this
+          // frame. A second batchDraw RAF would add another frame of input delay.
+          Konva.autoDrawEnabled = false;
+          try {
+            if (!session.lifted && dragLayer) {
+              session.nodes.forEach(({ node }) => {
+                const originalLayer = node.getLayer();
+                if (originalLayer) originalLayers.add(originalLayer);
+                node.moveTo(dragLayer);
+              });
+              session.lifted = true;
+            }
+            session.nodes.forEach(({ node, x, y }) => node.position({ x: x + preview.dx * mapper.pitch.width, y: y + preview.dy * mapper.pitch.height }));
+          } finally { Konva.autoDrawEnabled = autoDraw; }
+          originalLayers.forEach(layer => layer.draw());
+          if (dragLayer) dragLayer.draw();
+        }
       });
     }
-    stage.container().style.cursor = session.moved ? 'grabbing' : 'grab';
+    stage.container().style.cursor = 'grabbing';
     return true;
   };
-  const finishBoardItemAt = (stage: Konva.Stage) => {
+  const finishBoardItemAt = (stage: Konva.Stage, rel = boardDragRef.current?.current ?? pointerRel(stage, false)) => {
     const session = boardDragRef.current;
     if (!session) return false;
-    const rel = pointerRel(stage);
-    const dx = rel.x - session.start.x;
-    const dy = rel.y - session.start.y;
-    if (session.moved && (dx || dy)) moveSelectedItems(session.ids, dx, dy);
     boardDragRef.current = null;
     if (boardDragFrameRef.current !== null) cancelAnimationFrame(boardDragFrameRef.current);
     boardDragFrameRef.current = null;
     pendingBoardDragRef.current = null;
     setBoardDragPreview(null);
     setFieldPlayerDrag(null);
+    // Fast gestures can reach pointerup before a pointermove is delivered.
+    const dx = rel.x - session.start.x;
+    const dy = rel.y - session.start.y;
+    const moved = session.moved || boardDragMoved(session.start, rel, { width: mapper.pitch.width * displayScale, height: mapper.pitch.height * displayScale });
+    const move = constrainBoardMove(useTacticsStore.getState().project, session.ids, moved ? dx : 0, moved ? dy : 0);
+    // Put nodes back into their normal layer at the committed position. There
+    // must not be an intermediate paint of the pre-drag position on release.
+    restoreDragNodes(session, { x: move.dx * mapper.pitch.width, y: move.dy * mapper.pitch.height });
+    if (moved) moveSelectedItems(move.ids, move.dx, move.dy);
+    else stage.batchDraw();
     stage.container().style.cursor = 'default';
     return true;
   };
   const moveAt = (stage: Konva.Stage) => {
+    if (!draft && !selection) return;
     const rel = pointerRel(stage);
     pendingPointerRef.current = rel;
     if (pointerFrameRef.current !== null) return;
@@ -1352,6 +1395,103 @@ export function PitchCanvas({ stageRef, onHome, onOpenVideo }: { stageRef: RefOb
     }
   };
 
+  function cancelInteraction() {
+    stopPointerTrackingRef.current?.();
+    stopPointerTrackingRef.current = null;
+    releasePointerCapture();
+    const session = boardDragRef.current;
+    restoreDragNodes(session);
+    boardDragRef.current = null;
+    activePointerRef.current = null;
+    pendingPointerRef.current = null;
+    pendingBoardDragRef.current = null;
+    if (pointerFrameRef.current !== null) cancelAnimationFrame(pointerFrameRef.current);
+    if (boardDragFrameRef.current !== null) cancelAnimationFrame(boardDragFrameRef.current);
+    pointerFrameRef.current = null;
+    boardDragFrameRef.current = null;
+    setBoardDragPreview(null);
+    setFieldPlayerDrag(null);
+    setDraft(null);
+    setSelectionBox(null);
+    stageRef.current?.batchDraw();
+    if (stageRef.current) stageRef.current.container().style.cursor = canDraw ? 'crosshair' : 'default';
+  }
+  useEffect(() => {
+    const onBlur = () => { if (!boardDragRef.current) cancelInteraction(); };
+    window.addEventListener('blur', onBlur);
+    return () => window.removeEventListener('blur', onBlur);
+  }, []);
+  const boardPointFromClient = (event: { clientX: number; clientY: number }) => {
+    const rect = stageRef.current!.container().getBoundingClientRect();
+    return {
+      x: ((event.clientX - rect.left) / displayScale - mapper.pitch.x) / mapper.pitch.width,
+      y: ((event.clientY - rect.top) / displayScale - mapper.pitch.y) / mapper.pitch.height,
+    };
+  };
+  const releasePointerCapture = () => {
+    const pointerId = activePointerRef.current;
+    activePointerRef.current = null;
+    const element = pointerCaptureRef.current;
+    pointerCaptureRef.current = null;
+    if (pointerId !== null && element?.hasPointerCapture(pointerId)) element.releasePointerCapture(pointerId);
+  };
+  const beginPointer = (event: React.PointerEvent<HTMLDivElement>) => {
+    if (playing || event.button !== 0 || !event.isPrimary) return;
+    const stage = stageRef.current;
+    if (!stage) return;
+    // A new primary down always starts a new gesture, including after an
+    // interrupted release outside the window. Never consume the next drag.
+    if (activePointerRef.current !== null) cancelInteraction();
+    event.preventDefault();
+    stage.setPointersPositions(event.nativeEvent);
+    activePointerRef.current = event.pointerId;
+    pointerCaptureRef.current = event.currentTarget;
+    event.currentTarget.setPointerCapture(event.pointerId);
+    if (beginBoardItemAt(stage, event.nativeEvent)) {
+      if (boardDragRef.current) stopPointerTrackingRef.current = trackBoardPointer(window, event.pointerId, {
+        move: native => moveBoardItemAt(stage, boardPointFromClient(native)),
+        release: native => {
+          stopPointerTrackingRef.current = null;
+          const session = boardDragRef.current;
+          const bench = document.elementFromPoint(native.clientX, native.clientY)?.closest<HTMLElement>('[data-bench-team]');
+          const benchTeam = bench?.dataset.benchTeam;
+          releasePointerCapture();
+          if (session?.moved && benchTeam && benchTeam === session.fieldPlayers?.teamId) receivePlayersOnBench(benchTeam);
+          else finishBoardItemAt(stage, boardPointFromClient(native));
+        },
+        interrupt: () => {
+          stopPointerTrackingRef.current = null;
+          releasePointerCapture();
+          // Preserve the last preview if the browser interrupts capture. Escape
+          // and explicit tool changes still cancel through cancelInteraction.
+          finishBoardItemAt(stage);
+        },
+      });
+      return;
+    }
+    if (canDraw) select(undefined);
+    beginAt(stage);
+  };
+  const movePointer = (event: React.PointerEvent<HTMLDivElement>) => {
+    const stage = stageRef.current;
+    if (!stage) return;
+    stage.setPointersPositions(event.nativeEvent);
+    if (activePointerRef.current === null) {
+      const item = !canDraw && !playing ? boardItemAt(stage).item : undefined;
+      stage.container().style.cursor = canDraw ? 'crosshair' : item ? item.locked ? 'not-allowed' : 'grab' : 'default';
+      return;
+    }
+    if (activePointerRef.current !== event.pointerId) return;
+    if (!boardDragRef.current) moveAt(stage);
+  };
+  const finishPointer = (event: React.PointerEvent<HTMLDivElement>) => {
+    if (activePointerRef.current !== event.pointerId || !stageRef.current) return;
+    const stage = stageRef.current;
+    stage.setPointersPositions(event.nativeEvent);
+    if (!finishBoardItemAt(stage, boardPointFromClient(event))) finishAt(stage);
+    releasePointerCapture();
+  };
+
   const selectionRect = selection ? {
     x: Math.min(selection.start[0], selection.current[0]),
     y: Math.min(selection.start[1], selection.current[1]),
@@ -1368,14 +1508,14 @@ export function PitchCanvas({ stageRef, onHome, onOpenVideo }: { stageRef: RefOb
     if (!playerId || !stageRef.current) return;
     event.preventDefault();
     const rect = stageRef.current.container().getBoundingClientRect();
-    const rel = mapper.toRel((event.clientX - rect.left) / scale, (event.clientY - rect.top) / scale);
+    const rel = mapper.toRel((event.clientX - rect.left) / displayScale, (event.clientY - rect.top) / displayScale);
     checkpointHistory();
     placePlayer(playerId, rel.x, rel.y);
   };
   const curvePointerRel = (event: React.PointerEvent<HTMLButtonElement>) => {
     const rect = stageRef.current?.container().getBoundingClientRect();
     if (!rect) return undefined;
-    return mapper.toRel((event.clientX - rect.left) / scale, (event.clientY - rect.top) / scale);
+    return mapper.toRel((event.clientX - rect.left) / displayScale, (event.clientY - rect.top) / displayScale);
   };
   const beginCurveOverlayDrag = (event: React.PointerEvent<HTMLButtonElement>) => {
     if (!selectedCurveDrawing || !selectedCurveControl) return;
@@ -1410,10 +1550,15 @@ export function PitchCanvas({ stageRef, onHome, onOpenVideo }: { stageRef: RefOb
     setCurveDrag(null);
   };
   const receivePlayersOnBench = (teamId: string) => {
-    if (!fieldPlayerDrag || fieldPlayerDrag.teamId !== teamId || !fieldPlayerDrag.playerIds.length) return;
+    const fieldPlayers = boardDragRef.current?.fieldPlayers;
+    if (!fieldPlayers || fieldPlayers.teamId !== teamId || !fieldPlayers.playerIds.length) return;
+    restoreDragNodes(boardDragRef.current);
     checkpointHistory();
-    fieldPlayerDrag.playerIds.forEach(playerId => setPlayerStarter(playerId, false));
+    fieldPlayers.playerIds.forEach(playerId => setPlayerStarter(playerId, false));
     boardDragRef.current = null;
+    if (boardDragFrameRef.current !== null) cancelAnimationFrame(boardDragFrameRef.current);
+    boardDragFrameRef.current = null;
+    pendingBoardDragRef.current = null;
     setBoardDragPreview(null);
     setFieldPlayerDrag(null);
     const stage = stageRef.current;
@@ -1447,13 +1592,13 @@ export function PitchCanvas({ stageRef, onHome, onOpenVideo }: { stageRef: RefOb
     lineColor: '#f8fafc',
   });
 
-  return <div className={`relative flex h-full w-full flex-col overflow-hidden bg-[size:70px_70px,70px_70px,auto,auto] ${dark ? 'bg-[linear-gradient(90deg,rgba(110,231,183,.055)_1px,transparent_1px),linear-gradient(0deg,rgba(110,231,183,.055)_1px,transparent_1px),radial-gradient(circle_at_18%_12%,rgba(16,185,129,.18),transparent_32%),linear-gradient(135deg,#04130b,#0a2113_48%,#06170e)]' : 'bg-[linear-gradient(90deg,rgba(15,118,110,.04)_1px,transparent_1px),linear-gradient(0deg,rgba(15,118,110,.04)_1px,transparent_1px),radial-gradient(circle_at_18%_12%,#d1fae5,transparent_32%),linear-gradient(135deg,#f3f8f3,#edf7ef_48%,#fafbf7)]'}`}>
-    <header className={`relative z-20 flex h-14 shrink-0 items-center justify-between gap-3 border-b px-3 backdrop-blur-xl sm:px-4 ${dark ? 'border-emerald-950/80 bg-[#04130b]/70' : 'border-white/70 bg-white/60'}`}>
+  return <div className="board-workspace relative flex h-full w-full flex-col overflow-hidden">
+    <header className={`board-header relative z-20 flex h-14 shrink-0 items-center justify-between gap-3 border-b px-3 backdrop-blur-xl sm:px-4 ${dark ? 'border-emerald-950/80 bg-[#04130b]/70' : 'border-white/70 bg-white/60'}`}>
       <div className="flex min-w-0 items-center gap-2.5">
-        <img src="/ZTBLogo.png" alt="ZaidTacticsBoard logo" className="h-9 w-9 shrink-0 rounded-full bg-white object-cover p-0.5 shadow-[0_5px_18px_rgba(37,99,235,.28)] ring-1 ring-white/80" />
+        <StudioLogo />
         <div className="min-w-0">
-          <h1 className={`truncate bg-gradient-to-r bg-clip-text text-lg font-black leading-none text-transparent sm:text-xl ${dark ? 'from-white via-[#bbf7d0] to-[#5eead4]' : 'from-[#10251a] via-[#0f766e] to-[#15803d]'}`} style={{ fontFamily: '"Segoe UI Variable Display", "Aptos Display", Inter, system-ui, sans-serif' }}>ZaidTacticsBoard</h1>
-          <p className={`mt-0.5 hidden text-[8px] font-black uppercase tracking-[0.24em] sm:block ${dark ? 'text-slate-400' : 'text-slate-500'}`}>Tactical studio</p>
+          <h1 className="truncate board-brand text-lg font-bold leading-none sm:text-xl" style={{ fontFamily: '"Segoe UI Variable Display", "Aptos Display", Inter, system-ui, sans-serif' }}>ZaidTacticsBoard</h1>
+          <p className={`mt-0.5 hidden text-[8px] font-black uppercase tracking-[0.24em] sm:block ${dark ? 'text-slate-400' : 'text-slate-500'}`}>Tactics board</p>
         </div>
       </div>
       <div className="relative flex shrink-0 items-center gap-1.5">
@@ -1491,61 +1636,20 @@ export function PitchCanvas({ stageRef, onHome, onOpenVideo }: { stageRef: RefOb
         </div>}
       </div>
     </header>
-    {dockTab !== 'squad' && project.teams[0] && <BenchTray team={project.teams[0]} side="left" fieldPlayerDrag={fieldPlayerDrag} onReceivePlayers={receivePlayersOnBench} />}
-    {dockTab !== 'squad' && project.teams[1] && <BenchTray team={project.teams[1]} side="right" fieldPlayerDrag={fieldPlayerDrag} onReceivePlayers={receivePlayersOnBench} />}
-    <div ref={containerRef} onDragOver={e => e.preventDefault()} onDrop={dropPlayer} className="relative min-h-0 flex-1 overflow-auto overscroll-contain">
-      <div className="relative z-10 grid min-h-full min-w-full place-items-center p-2 sm:p-4">
-        <div className="board-stage-wrap relative shrink-0 touch-none" style={{ width: width * scale, height: height * scale }}>
-          <Stage ref={stageRef} width={width * scale} height={height * scale} scale={{ x: scale, y: scale }} pixelRatio={canvasPixelRatio}
-          onMouseDown={(e) => {
-            const stage = e.target.getStage();
-            if (!stage) return;
-            const native = e.evt as MouseEvent;
-            if (native.button !== 0) return;
-            if (beginBoardItemAt(stage, native)) return;
-            const hitInteractiveItem = e.target !== stage && Boolean(e.target.findAncestor('.board-item', true));
-            if (hitInteractiveItem) return;
-            if (canDraw) select(undefined);
-            beginAt(stage);
-          }}
-          onMouseMove={(e) => {
-            const stage = e.target.getStage();
-            if (!stage) return;
-            if (moveBoardItemAt(stage)) return;
-            if (e.target === stage && !canDraw) stage.container().style.cursor = 'default';
-            moveAt(stage);
-          }}
-          onMouseUp={(e) => {
-            const stage = e.target.getStage();
-            if (!stage || finishBoardItemAt(stage)) return;
-            finishAt(stage);
-          }}
-          onTouchStart={(e) => {
-            const stage = e.target.getStage();
-            if (!stage) return;
-            if (beginBoardItemAt(stage, e.evt as TouchEvent)) return;
-            const hitInteractiveItem = e.target !== stage && Boolean(e.target.findAncestor('.board-item', true));
-            if (hitInteractiveItem) return;
-            beginAt(stage);
-          }}
-          onTouchMove={(e) => {
-            const stage = e.target.getStage();
-            if (!stage || moveBoardItemAt(stage)) return;
-            moveAt(stage);
-          }}
-          onTouchEnd={(e) => {
-            const stage = e.target.getStage();
-            if (!stage || finishBoardItemAt(stage)) return;
-            finishAt(stage);
-          }}>
+    {dockTab !== 'squad' && project.teams[0] && <BenchTray team={project.teams[0]} side="left" fieldPlayerDrag={fieldPlayerDrag} />}
+    {dockTab !== 'squad' && project.teams[1] && <BenchTray team={project.teams[1]} side="right" fieldPlayerDrag={fieldPlayerDrag} />}
+    <div className="board-workarea relative flex min-h-0 flex-1">
+    <BoardToolbox />
+    <div ref={containerRef} onDragOver={e => e.preventDefault()} onDrop={dropPlayer} className="board-viewport relative min-h-0 min-w-0 flex-1 overflow-auto overscroll-contain">
+      <div className="board-center relative z-10 grid min-h-full min-w-full place-items-center">
+        <div role="application" aria-label="Tactics board canvas. Drag players to move them. Shift-click to select multiple items." onPointerDownCapture={event => { if (!(event.target instanceof Element && event.target.closest('button'))) beginPointer(event); }} onPointerMove={movePointer} onPointerUp={finishPointer} onPointerCancel={() => { if (activePointerRef.current !== null) cancelInteraction(); }} onLostPointerCapture={() => { if (activePointerRef.current !== null && !boardDragRef.current) cancelInteraction(); }} className="board-stage-wrap relative shrink-0 touch-none" style={{ width: width * displayScale, height: height * displayScale }}>
+          <div style={{ width: width * scale, height: height * scale, transform: `scale(${magnification})`, transformOrigin: 'top left', willChange: 'transform' }}>
+          <Stage ref={stageRef} width={width * scale} height={height * scale} scale={stageScale}>
           <Layer listening={false}><Pitch width={width} height={height} mapper={mapper} /></Layer>
-          <Layer listening={boardInteractive}>{sortedDrawings.map(d => <DrawingShape key={d.id} drawing={d} mapper={mapper} interactive={boardInteractive} />)}</Layer>
+          <Layer listening={boardInteractive}>{sortedDrawings.map(d => <Group key={d.id} id={`drawing-node-${d.id}`} x={0} y={0}><DrawingShape drawing={d} mapper={mapper} interactive={boardInteractive} /></Group>)}</Layer>
           <Layer listening={boardInteractive}>
             {displayPlayers.map(p => <PlayerMarker key={p.id} player={p} mapper={mapper} />)}
             <BallMarker ball={displayBall} mapper={mapper} />
-          </Layer>
-          <Layer listening={boardInteractive}>
-            <ManagedBoardHitTargets players={displayPlayers} ball={displayBall} drawings={sortedDrawings} mapper={mapper} />
           </Layer>
           <Layer listening={false}>
             {draftDrawing && <DrawingShape drawing={draftDrawing} mapper={mapper} interactive={false} />}
@@ -1562,7 +1666,9 @@ export function PitchCanvas({ stageRef, onHome, onOpenVideo }: { stageRef: RefOb
               cornerRadius={4}
             />}
           </Layer>
+          <Layer ref={dragLayerRef} listening={false} />
           </Stage>
+          </div>
           {boardInteractive && selectedCurveDrawing && selectedCurveControl && <button
             type="button"
             aria-label="Reshape selected arrow"
@@ -1573,7 +1679,7 @@ export function PitchCanvas({ stageRef, onHome, onOpenVideo }: { stageRef: RefOb
             onPointerUp={event => finishCurveOverlayDrag(event, true)}
             onPointerCancel={event => finishCurveOverlayDrag(event, false)}
             className="absolute z-40 h-20 w-20 -translate-x-1/2 -translate-y-1/2 cursor-crosshair touch-none rounded-full border-0 bg-transparent p-0 outline-none"
-            style={{ left: selectedCurveControl[0] * scale, top: selectedCurveControl[1] * scale }}
+            style={{ left: selectedCurveControl[0] * displayScale, top: selectedCurveControl[1] * displayScale }}
           >
             <span className="pointer-events-none absolute inset-4 rounded-full bg-cyan-400/20 ring-1 ring-cyan-300/40" />
             <span className="pointer-events-none absolute left-1/2 top-1/2 h-5 w-5 -translate-x-1/2 -translate-y-1/2 rounded-full border-[3px] border-white bg-cyan-500 shadow-[0_4px_12px_rgba(8,145,178,.55)]" />
@@ -1581,6 +1687,11 @@ export function PitchCanvas({ stageRef, onHome, onOpenVideo }: { stageRef: RefOb
           </button>}
         </div>
       </div>
+    </div>
+    </div>
+    <div className="board-statusbar">
+      <div className="board-status-copy"><span className="board-live-dot" /><span>{playing ? 'Playing scenes' : selectedIds.length ? selectedIds.length + ' selected' : 'Ready to create'}</span><span className="board-status-hint">{tool === 'select' ? 'Drag to move · Shift-click to select' : 'Drag on the pitch to draw · Esc to cancel'}</span></div>
+      <div className="board-status-actions"><QuickActions embedded /><button className="board-fit-button" onClick={() => useTacticsStore.getState().setViewZoom(boardFitZoom(format))} title="Fit entire board to the available space">Fit</button><PitchScaleControl embedded /></div>
     </div>
   </div>;
 }

@@ -1,6 +1,6 @@
 import { lazy, Suspense, useCallback, useEffect, useRef, useState } from 'react';
 import type Konva from 'konva';
-import { ControlDock, DockModeSwitcher, PitchScaleControl, QuickActions } from './components/ControlDock';
+import { ControlDock, DockModeSwitcher } from './components/ControlDock';
 import { StudioHome } from './components/StudioHome';
 import { useMediaQuery } from './hooks/useMediaQuery';
 import { useTacticsStore } from './store/tacticsStore';
@@ -132,6 +132,8 @@ function sceneFrame(scene: Scene): PlaybackFrame {
 export default function App() {
   const stageRef = useRef<Konva.Stage | null>(null);
   const [mode, setMode] = useState<AppMode>(() => modeFromHash());
+  const [videoOpened, setVideoOpened] = useState(() => modeFromHash() === 'video');
+  useEffect(() => { if (mode === 'video') setVideoOpened(true); }, [mode]);
   const dark = useTacticsStore(s => s.project.settings.theme === 'dark');
   const dockPosition = useTacticsStore(s => s.dockPosition);
   const touchLayout = useMediaQuery('(pointer: coarse), (max-width: 767px)');
@@ -190,18 +192,16 @@ export default function App() {
 
   return <div className="relative h-screen h-[100dvh] overflow-hidden">
     {mode === 'home' && <StudioHome onOpenBoard={() => openMode('board')} onOpenVideo={() => openMode('video')} />}
-    {mode === 'video' && <Suspense fallback={<div className="grid h-full place-items-center bg-slate-950 text-sm font-black text-slate-300">Opening video studio…</div>}>
-      <VideoAnalysisTool active onHome={() => openMode('home')} onOpenBoard={() => openMode('board')} />
-    </Suspense>}
+    {(videoOpened || mode === 'video') && <div className={mode === 'video' ? 'h-full' : 'hidden'} aria-hidden={mode !== 'video'}><Suspense fallback={<div className="grid h-full place-items-center bg-slate-950 text-sm font-black text-slate-300">Opening video studio…</div>}>
+      <VideoAnalysisTool active={mode === 'video'} onHome={() => openMode('home')} onOpenBoard={() => openMode('board')} />
+    </Suspense></div>}
     {mode === 'board' && <div className={`tactics-shell flex h-full w-full overflow-hidden ${effectiveDockPosition === 'right' ? 'flex-row' : 'flex-col'} ${touchLayout ? 'tactics-touch' : ''} ${dark ? 'tactics-dark bg-slate-950 text-slate-100' : 'bg-[#f6f9ff] text-[#0b172a]'}`}>
       <main className="relative min-h-0 min-w-0 flex-1 overflow-hidden">
         <Suspense fallback={<div className="grid h-full place-items-center bg-[#071b12] text-sm font-black text-white">Opening tactics board…</div>}>
           <PitchCanvas stageRef={stageRef} onHome={() => openMode('home')} onOpenVideo={() => openMode('video')} />
         </Suspense>
-        {effectiveDockPosition === 'hidden' && <div className="pointer-events-none absolute bottom-3 left-1/2 z-40 flex max-w-[calc(100%-1.5rem)] -translate-x-1/2 flex-wrap items-center justify-center gap-2">
+        {effectiveDockPosition === 'hidden' && <div className="pointer-events-none absolute right-6 top-20 z-40 flex items-center gap-2">
           <DockModeSwitcher />
-          <PitchScaleControl />
-          <QuickActions />
         </div>}
       </main>
       {effectiveDockPosition !== 'hidden' && <ControlDock forceBottomDock={forceBottomDock} onExportImage={exportImage} onPreviewAnimation={() => { void playScenes(); }} onExportVideo={exportVideo} />}

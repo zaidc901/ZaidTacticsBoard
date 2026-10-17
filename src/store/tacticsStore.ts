@@ -1,5 +1,7 @@
+import { clampBoardZoom } from '../utils/boardZoom';
+import { constrainBoardMove } from '../utils/boardInteraction';
 import { create } from 'zustand';
-import { createJSONStorage, persist } from 'zustand/middleware';
+import { createJSONStorage, persist, type PersistStorage } from 'zustand/middleware';
 import { formations, FormationKey } from '../data/formations';
 import { presetStartingLineups, PresetStartingLineupPlayer } from '../data/presetStartingLineups';
 import { premierLeagueSquads, premierLeagueStartingLineups } from '../data/premierLeagueSquads';
@@ -494,11 +496,39 @@ interface Store {
   importProject: (project: Project) => void;
 }
 
+type SavedBoardState = Pick<Store, 'project' | 'toolStyle' | 'viewZoom' | 'dockPosition' | 'dockTab'>;
+const jsonStorage = createJSONStorage<SavedBoardState>(() => sessionStorage);
+let lastSavedState: SavedBoardState | undefined;
+let zoomSaveTimer: ReturnType<typeof setTimeout> | undefined;
+// Selection and playback frames are transient: do not serialize the project for them.
+const boardStorage: PersistStorage<SavedBoardState> | undefined = jsonStorage && {
+  getItem: jsonStorage.getItem,
+  removeItem: jsonStorage.removeItem,
+  setItem: (name, value) => {
+    const next = value.state;
+    if (zoomSaveTimer) { clearTimeout(zoomSaveTimer); zoomSaveTimer = undefined; }
+    if (lastSavedState && next.project === lastSavedState.project && next.toolStyle === lastSavedState.toolStyle
+      && next.viewZoom === lastSavedState.viewZoom && next.dockPosition === lastSavedState.dockPosition && next.dockTab === lastSavedState.dockTab) return;
+    if (lastSavedState && next.project === lastSavedState.project && next.toolStyle === lastSavedState.toolStyle
+      && next.dockPosition === lastSavedState.dockPosition && next.dockTab === lastSavedState.dockTab) {
+      zoomSaveTimer = setTimeout(() => {
+        jsonStorage.setItem(name, value);
+        lastSavedState = next;
+        zoomSaveTimer = undefined;
+      }, 180);
+      return;
+    }
+    const result = jsonStorage.setItem(name, value);
+    lastSavedState = next;
+    return result;
+  },
+};
+
 export const useTacticsStore = create<Store>()(persist((set, get) => ({
-  project: createInitialProject(), selectedIds: [], tool: 'select', toolStyle: defaultToolStyle, viewZoom: 1.08, dockPosition: 'bottom', dockTab: 'page', playing: false, historyPast: [], historyFuture: [],
+  project: createInitialProject(), selectedIds: [], tool: 'select', toolStyle: defaultToolStyle, viewZoom: 1, dockPosition: 'right', dockTab: 'page', playing: false, historyPast: [], historyFuture: [],
   setTool: (tool) => set({ tool }),
   setToolStyle: (patch) => set(s => ({ toolStyle: { ...s.toolStyle, ...patch } })),
-  setViewZoom: (viewZoom) => set({ viewZoom }),
+  setViewZoom: (viewZoom) => set(state => ({ viewZoom: clampBoardZoom(viewZoom, state.project.settings.format) })),
   setDockPosition: (dockPosition) => set({ dockPosition }),
   setDockTab: (dockTab) => set({ dockTab }),
   setBoardFormat: (format) => set(({ project }) => {
@@ -512,6 +542,7 @@ export const useTacticsStore = create<Store>()(persist((set, get) => ({
       pitchScaleY: project.settings.pitchScaleX,
     };
     return {
+      viewZoom: clampBoardZoom(get().viewZoom, format),
       project: {
         ...project,
         settings: nextSettings,
@@ -729,11 +760,11 @@ export const useTacticsStore = create<Store>()(persist((set, get) => ({
     historyFuture: [],
   })),
   moveSelectedItems: (itemIds, dx, dy) => set(({ project, historyPast }) => {
-    const fixedFollowAreaIds = new Set(project.drawings
-      .filter(drawing => drawing.type === 'polygon-zone' && drawing.followPlayers)
-      .map(drawing => drawing.id));
-    const movableItemIds = itemIds.filter(itemId => !fixedFollowAreaIds.has(itemId));
-    if (!movableItemIds.length) return {};
+    const move = constrainBoardMove(project, itemIds, dx, dy);
+    const movableItemIds = move.ids;
+    dx = move.dx;
+    dy = move.dy;
+    if (!movableItemIds.length || (!dx && !dy)) return {};
     const nextTeams = project.teams.map(team => ({
       ...team,
       squad: team.squad.map(player => movableItemIds.includes(player.id)
@@ -851,7 +882,7 @@ export const useTacticsStore = create<Store>()(persist((set, get) => ({
 }), {
   name: 'tactical-studio-session-v5',
   version: 12,
-  storage: createJSONStorage(() => sessionStorage),
+  storage: boardStorage,
   migrate: (persisted) => {
     const state = persisted as Partial<Store>;
     if (!state.project) return state as Store;

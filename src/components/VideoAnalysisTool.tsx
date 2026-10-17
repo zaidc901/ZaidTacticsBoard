@@ -1,105 +1,19 @@
+import { recordVideoComposition } from '../utils/videoMedia';
 import { ChangeEvent, DragEvent as ReactDragEvent, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import Konva from 'konva';
 import { ArrowLeft, ArrowRight, Circle as CircleIcon, Copy, Download, Eraser, Eye, EyeOff, Film, Gauge, Grid3X3, HelpCircle, Home, KeyRound, Lock, Moon, MousePointer2, MoveRight, Pause, Play, Plus, Redo2, Route, Scissors, Snowflake, Sparkles, Square, Sun, Trash2, Type, Undo2, Unlock, Upload, Video, X } from 'lucide-react';
 import { Arrow, Circle, Ellipse, Group, Layer, Line, Rect, Stage, Text } from 'react-konva';
 import { useMediaQuery } from '../hooks/useMediaQuery';
 
-type VideoTool = 'select' | 'arrow' | 'dashed-line' | 'run' | 'zone' | 'circle-zone' | 'player-circle' | 'connection-line' | 'highlight' | 'spotlight' | 'text';
-type VideoAnnotationType = Exclude<VideoTool, 'select'> | 'polygon-zone';
-type GridMode = 'off' | 'thirds' | 'lanes';
-type OverlayMotion = 'none' | 'fade' | 'pop' | 'slide';
-type OverlayPattern = 'none' | 'shine' | 'diagonal' | 'grid' | 'scan' | 'pulse-border';
-type EditCommand = 'move' | 'shape';
-
-type VideoClip = {
-  id: string;
-  file: File;
-  name: string;
-  url: string;
-  duration: number;
-  width: number;
-  height: number;
-};
-
-type VideoKeyframe = {
-  id: string;
-  time: number;
-  points: number[];
-};
-
-type VideoAnnotation = {
-  id: string;
-  type: VideoAnnotationType;
-  points: number[];
-  connectionIds?: string[];
-  text?: string;
-  labelVisible?: boolean;
-  color: string;
-  fill: string;
-  strokeWidth: number;
-  opacity: number;
-  outlineOpacity: number;
-  startTime: number;
-  endTime: number;
-  bend: number;
-  dashed: boolean;
-  locked: boolean;
-  hidden: boolean;
-  zIndex: number;
-  motion: OverlayMotion;
-  pattern: OverlayPattern;
-  keyframes: VideoKeyframe[];
-};
-
-type FreezeSegment = {
-  id: string;
-  time: number;
-  duration: number;
-};
-
-type TimelineSegment = {
-  id: string;
-  kind: 'video' | 'freeze';
-  label: string;
-  sourceStart: number;
-  sourceEnd: number;
-  duration: number;
-  timelineStart: number;
-  freezeId?: string;
-};
-
-type VideoAnalysisToolProps = {
-  onHome: () => void;
-  onOpenBoard: () => void;
-  active?: boolean;
-};
-
-type Mapper = {
-  width: number;
-  height: number;
-  toAbs: (x: number, y: number) => [number, number];
-  toRel: (x: number, y: number) => { x: number; y: number };
-};
-
-type Bounds = { x1: number; y1: number; x2: number; y2: number };
-
-type DrawingStyle = {
-  color: string;
-  fill: string;
-  strokeWidth: number;
-  opacity: number;
-};
-
-type HistorySnapshot = {
-  annotations: VideoAnnotation[];
-  freezes: FreezeSegment[];
-};
-
+import type { VideoTool, VideoAnnotationType, GridMode, OverlayMotion, OverlayPattern, EditCommand, VideoClip, VideoKeyframe, VideoAnnotation, FreezeSegment, TimelineSegment, VideoAnalysisToolProps, Mapper, Bounds, DrawingStyle, HistorySnapshot } from '../types/video';
+import { buildTimelineSegments, timelineDuration, timelineSnapPoints, nearestTimelineSnap, closestTimelineSnap, snapTimelineTime, timelineToSource, sourceToTimeline } from '../utils/videoTimeline';
+import { cloneHistorySnapshot, makeHistorySnapshot } from '../utils/videoHistory';
+import { useElementSize } from '../hooks/useElementSize';
+import { StudioLogo } from './StudioLogo';
 const id = () => crypto.randomUUID();
 const clamp01 = (value: number) => Math.max(0, Math.min(1, value));
 const clampRange = (value: number, min: number, max: number) => Math.max(min, Math.min(max, value));
 const nextFrame = () => new Promise<void>(resolve => requestAnimationFrame(() => resolve()));
-const wait = (ms: number) => new Promise<void>(resolve => window.setTimeout(resolve, Math.max(0, ms)));
 const FRAME_STEP_SECONDS = 1 / 30;
 const MIN_ANNOTATION_DURATION = FRAME_STEP_SECONDS;
 const HIT_FILL = 'rgba(255,255,255,0.01)';
@@ -150,22 +64,6 @@ function defaultPattern(type: VideoAnnotationType): OverlayPattern {
   return 'none';
 }
 
-function useElementSize<T extends HTMLElement>() {
-  const ref = useRef<T | null>(null);
-  const [size, setSize] = useState({ width: 900, height: 560 });
-
-  useEffect(() => {
-    if (!ref.current) return;
-    const observer = new ResizeObserver(([entry]) => {
-      setSize({ width: entry.contentRect.width, height: entry.contentRect.height });
-    });
-    observer.observe(ref.current);
-    return () => observer.disconnect();
-  }, []);
-
-  return { ref, size };
-}
-
 function timeLabel(seconds: number) {
   if (!Number.isFinite(seconds)) return '0:00.00';
   const safe = Math.max(0, seconds);
@@ -190,8 +88,8 @@ function makeMapper(width: number, height: number): Mapper {
 
 function displaySize(container: { width: number; height: number }, video: Pick<VideoClip, 'width' | 'height'> | undefined) {
   const ratio = Math.max(0.1, (video?.width || 1280) / (video?.height || 720));
-  const availableWidth = Math.max(240, container.width - 16);
-  const availableHeight = Math.max(160, container.height - 16);
+  const availableWidth = Math.max(80, container.width - 24);
+  const availableHeight = Math.max(80, container.height - 24);
   let targetWidth = Math.min(1152, availableWidth);
   let targetHeight = targetWidth / ratio;
   if (targetHeight > availableHeight) {
@@ -202,22 +100,11 @@ function displaySize(container: { width: number; height: number }, video: Pick<V
 }
 
 function scaledSize(size: { width: number; height: number }, scale: number) {
-  const safeScale = clampRange(scale || 1, 1, 1.7);
+  const safeScale = clampRange(scale || 1, 1, 2.5);
   return {
     width: Math.round(size.width * safeScale),
     height: Math.round(size.height * safeScale),
   };
-}
-
-function bestVideoMimeType() {
-  const types = [
-    'video/mp4;codecs=avc1.42E01E',
-    'video/mp4',
-    'video/webm;codecs=vp9',
-    'video/webm;codecs=vp8',
-    'video/webm',
-  ];
-  return types.find(type => MediaRecorder.isTypeSupported(type)) ?? '';
 }
 
 function downloadBlob(blob: Blob, filename: string) {
@@ -229,34 +116,6 @@ function downloadBlob(blob: Blob, filename: string) {
   link.click();
   link.remove();
   URL.revokeObjectURL(href);
-}
-
-function seekVideo(video: HTMLVideoElement, time: number) {
-  return new Promise<void>(resolve => {
-    const done = () => {
-      video.removeEventListener('seeked', done);
-      resolve();
-    };
-    video.addEventListener('seeked', done, { once: true });
-    video.currentTime = clampRange(time, 0, video.duration || time);
-    window.setTimeout(done, 220);
-  });
-}
-
-function waitForVideoMetadata(video: HTMLVideoElement) {
-  return new Promise<void>(resolve => {
-    if (video.readyState >= 1) {
-      resolve();
-      return;
-    }
-    const done = () => {
-      video.removeEventListener('loadedmetadata', done);
-      resolve();
-    };
-    video.addEventListener('loadedmetadata', done, { once: true });
-    window.setTimeout(done, 1000);
-    video.load();
-  });
 }
 
 function buildAnnotation(tool: VideoTool, start: number[], end: number[], style: DrawingStyle, time: number, zIndex: number): VideoAnnotation | null {
@@ -550,26 +409,6 @@ function duplicateAnnotation(annotation: VideoAnnotation, time: number) {
     startTime: annotation.startTime + timeOffset,
     endTime: annotation.endTime + timeOffset,
   };
-}
-
-function cloneAnnotation(annotation: VideoAnnotation): VideoAnnotation {
-  return {
-    ...annotation,
-    points: annotation.points.slice(),
-    connectionIds: annotation.connectionIds?.slice(),
-    keyframes: annotation.keyframes.map(keyframe => ({ ...keyframe, points: keyframe.points.slice() })),
-  };
-}
-
-function cloneHistorySnapshot(snapshot: HistorySnapshot): HistorySnapshot {
-  return {
-    annotations: snapshot.annotations.map(cloneAnnotation),
-    freezes: snapshot.freezes.map(freeze => ({ ...freeze })),
-  };
-}
-
-function makeHistorySnapshot(annotations: VideoAnnotation[], freezes: FreezeSegment[]): HistorySnapshot {
-  return cloneHistorySnapshot({ annotations, freezes });
 }
 
 function roundedRectPath(ctx: CanvasRenderingContext2D, x: number, y: number, width: number, height: number, radius: number) {
@@ -913,122 +752,6 @@ function drawCanvasGrid(ctx: CanvasRenderingContext2D, mode: GridMode, width: nu
   ctx.restore();
 }
 
-function buildTimelineSegments(trimStart: number, trimEnd: number, freezes: FreezeSegment[]): TimelineSegment[] {
-  const start = Math.max(0, trimStart);
-  const end = Math.max(start + 0.2, trimEnd);
-  const activeFreezes = freezes
-    .filter(freeze => freeze.time >= start && freeze.time <= end)
-    .sort((a, b) => a.time - b.time);
-  const segments: TimelineSegment[] = [];
-  let sourceCursor = start;
-  let timelineCursor = 0;
-
-  activeFreezes.forEach((freeze, index) => {
-    if (freeze.time > sourceCursor + 0.01) {
-      const duration = freeze.time - sourceCursor;
-      segments.push({
-        id: `video-${index}-${sourceCursor}`,
-        kind: 'video',
-        label: 'Video',
-        sourceStart: sourceCursor,
-        sourceEnd: freeze.time,
-        duration,
-        timelineStart: timelineCursor,
-      });
-      timelineCursor += duration;
-    }
-    const duration = clampRange(freeze.duration, 0.5, 10);
-    segments.push({
-      id: freeze.id,
-      kind: 'freeze',
-      label: 'Freeze image',
-      sourceStart: freeze.time,
-      sourceEnd: freeze.time,
-      duration,
-      timelineStart: timelineCursor,
-      freezeId: freeze.id,
-    });
-    timelineCursor += duration;
-    sourceCursor = freeze.time;
-  });
-
-  if (end > sourceCursor + 0.01) {
-    const duration = end - sourceCursor;
-    segments.push({
-      id: `video-tail-${sourceCursor}`,
-      kind: 'video',
-      label: 'Video',
-      sourceStart: sourceCursor,
-      sourceEnd: end,
-      duration,
-      timelineStart: timelineCursor,
-    });
-  }
-  return segments;
-}
-
-function timelineDuration(segments: TimelineSegment[]) {
-  const last = segments.at(-1);
-  return last ? last.timelineStart + last.duration : 0;
-}
-
-function timelineSnapPoints(segments: TimelineSegment[]) {
-  const total = timelineDuration(segments);
-  const points = [0, total];
-  segments.forEach(segment => {
-    points.push(segment.timelineStart);
-    points.push(segment.timelineStart + segment.duration);
-  });
-  return Array.from(new Set(points.map(point => Number(point.toFixed(3))))).sort((a, b) => a - b);
-}
-
-function nearestTimelineSnap(time: number, segments: TimelineSegment[], threshold = 0.12) {
-  const snap = timelineSnapPoints(segments).find(point => Math.abs(point - time) <= threshold);
-  return snap ?? time;
-}
-
-function closestTimelineSnap(time: number, segments: TimelineSegment[]) {
-  const points = timelineSnapPoints(segments);
-  return points.reduce((closest, point) => Math.abs(point - time) < Math.abs(closest - time) ? point : closest, points[0] ?? 0);
-}
-
-function snapTimelineTime(time: number, segments: TimelineSegment[], threshold = 0.12) {
-  const total = Math.max(0, timelineDuration(segments));
-  const safe = clampRange(time, 0, total);
-  return clampRange(nearestTimelineSnap(safe, segments, threshold), 0, total);
-}
-
-function timelineToSource(segments: TimelineSegment[], timelineTime: number) {
-  const total = timelineDuration(segments);
-  const safe = clampRange(timelineTime, 0, Math.max(0, total));
-  const segment = segments.find((item, index) => {
-    const start = item.timelineStart;
-    const end = item.timelineStart + item.duration;
-    return safe >= start && (safe < end || (index === segments.length - 1 && safe <= end));
-  }) ?? segments.at(-1);
-  if (!segment) return { sourceTime: 0, segment: undefined as TimelineSegment | undefined, timelineTime: safe };
-  if (segment.kind === 'freeze') return { sourceTime: segment.sourceStart, segment, timelineTime: safe };
-  return {
-    sourceTime: clampRange(segment.sourceStart + (safe - segment.timelineStart), segment.sourceStart, segment.sourceEnd),
-    segment,
-    timelineTime: safe,
-  };
-}
-
-function sourceToTimeline(segments: TimelineSegment[], sourceTime: number) {
-  if (!segments.length) return 0;
-  const freezeMatch = segments.find(segment => segment.kind === 'freeze' && Math.abs(sourceTime - segment.sourceStart) <= 0.02);
-  if (freezeMatch) return freezeMatch.timelineStart;
-  let fallback = 0;
-  for (const segment of segments) {
-    if (segment.kind === 'video' && sourceTime >= segment.sourceStart && sourceTime <= segment.sourceEnd) {
-      return segment.timelineStart + (sourceTime - segment.sourceStart);
-    }
-    if (sourceTime >= segment.sourceStart) fallback = segment.timelineStart + segment.duration;
-  }
-  return clampRange(fallback, 0, timelineDuration(segments));
-}
-
 function bendFromControl(x1: number, y1: number, x2: number, y2: number, controlX: number, controlY: number) {
   const midX = (x1 + x2) / 2;
   const midY = (y1 + y2) / 2;
@@ -1059,7 +782,13 @@ function VideoAnnotationShape({ annotation, time, effectTime, mapper, selected, 
   onConnectCancel?: () => void;
   onBeginEdit?: () => void;
 }) {
-  const dragStart = useRef<{ clientX: number; clientY: number; points: number[]; moved: boolean } | null>(null);
+  const dragStart = useRef<{ clientX: number; clientY: number; points: number[]; moved: boolean; scale: number; lastDx: number; lastDy: number } | null>(null);
+  const dragFrame = useRef<number | null>(null);
+  const dragCleanup = useRef<(() => void) | null>(null);
+  useEffect(() => () => {
+    if (dragFrame.current !== null) cancelAnimationFrame(dragFrame.current);
+    dragCleanup.current?.();
+  }, []);
   if (annotation.hidden || (!selected && !isAnnotationActive(annotation, time))) return null;
   const points = resolvedPointsAtTime(annotation, time, linkedAnnotations);
   if (points.length < 2) return null;
@@ -1077,11 +806,13 @@ function VideoAnnotationShape({ annotation, time, effectTime, mapper, selected, 
   const commitBodyDrag = (clientX: number, clientY: number, finish = false) => {
     const start = dragStart.current;
     if (!start) return;
-    const dx = (clientX - start.clientX) / mapper.width;
-    const dy = (clientY - start.clientY) / mapper.height;
-    if (Math.hypot(dx, dy) > 0.0001) {
+    const dx = (clientX - start.clientX) / (mapper.width * start.scale);
+    const dy = (clientY - start.clientY) / (mapper.height * start.scale);
+    if (Math.hypot(dx * mapper.width * start.scale, dy * mapper.height * start.scale) >= 3) {
+      if (!start.moved) onBeginEdit?.();
       start.moved = true;
-      onMoveAtTime(annotation.id, translatePoints(annotation.type, start.points, dx, dy));
+      onTranslateAtTime(annotation.id, dx - start.lastDx, dy - start.lastDy);
+      start.lastDx = dx; start.lastDy = dy;
     }
     if (finish) dragStart.current = null;
   };
@@ -1094,20 +825,22 @@ function VideoAnnotationShape({ annotation, time, effectTime, mapper, selected, 
       return;
     }
     if (connectMode && connectArmed) onConnectCancel?.();
-    const additive = 'ctrlKey' in native && (native.ctrlKey || native.metaKey);
+    const additive = 'ctrlKey' in native && (native.ctrlKey || native.metaKey || native.shiftKey);
     if (additive || !selected) onSelect(annotation.id, Boolean(additive));
-    onBeginEdit?.();
     const point = 'touches' in native ? native.touches[0] : native;
     if (!point) return;
-    dragStart.current = { clientX: point.clientX, clientY: point.clientY, points: points.slice(), moved: false };
+    dragStart.current = { clientX: point.clientX, clientY: point.clientY, points: points.slice(), moved: false, lastDx: 0, lastDy: 0, scale: (event.target.getStage()?.container().getBoundingClientRect().width ?? mapper.width) / mapper.width };
     const stage = event.target.getStage();
     if (stage) stage.container().style.cursor = 'grabbing';
 
     const moveMouse = (moveEvent: MouseEvent) => {
       moveEvent.preventDefault();
-      commitBodyDrag(moveEvent.clientX, moveEvent.clientY);
+      if (dragFrame.current !== null) cancelAnimationFrame(dragFrame.current);
+      dragFrame.current = requestAnimationFrame(() => { dragFrame.current = null; commitBodyDrag(moveEvent.clientX, moveEvent.clientY); });
     };
     const endMouse = (upEvent: MouseEvent) => {
+      if (dragFrame.current !== null) cancelAnimationFrame(dragFrame.current);
+      dragFrame.current = null;
       commitBodyDrag(upEvent.clientX, upEvent.clientY, true);
       window.removeEventListener('mousemove', moveMouse);
       window.removeEventListener('mouseup', endMouse);
@@ -1117,9 +850,12 @@ function VideoAnnotationShape({ annotation, time, effectTime, mapper, selected, 
       const touch = moveEvent.touches[0];
       if (!touch) return;
       moveEvent.preventDefault();
-      commitBodyDrag(touch.clientX, touch.clientY);
+      if (dragFrame.current !== null) cancelAnimationFrame(dragFrame.current);
+      dragFrame.current = requestAnimationFrame(() => { dragFrame.current = null; commitBodyDrag(touch.clientX, touch.clientY); });
     };
     const endTouch = (endEvent: TouchEvent) => {
+      if (dragFrame.current !== null) cancelAnimationFrame(dragFrame.current);
+      dragFrame.current = null;
       const touch = endEvent.changedTouches[0];
       if (touch) commitBodyDrag(touch.clientX, touch.clientY, true);
       else dragStart.current = null;
@@ -1127,6 +863,11 @@ function VideoAnnotationShape({ annotation, time, effectTime, mapper, selected, 
       window.removeEventListener('touchend', endTouch);
       window.removeEventListener('touchcancel', endTouch);
       if (stage) stage.container().style.cursor = annotation.locked ? 'default' : 'grab';
+    };
+    dragCleanup.current?.();
+    dragCleanup.current = () => {
+      window.removeEventListener('mousemove', moveMouse); window.removeEventListener('mouseup', endMouse);
+      window.removeEventListener('touchmove', moveTouch); window.removeEventListener('touchend', endTouch); window.removeEventListener('touchcancel', endTouch);
     };
     if ('touches' in native) {
       window.addEventListener('touchmove', moveTouch, { passive: false });
@@ -1141,17 +882,6 @@ function VideoAnnotationShape({ annotation, time, effectTime, mapper, selected, 
     draggable: false,
     onMouseDown: beginBodyDrag,
     onTouchStart: beginBodyDrag,
-    onClick: (event: Konva.KonvaEventObject<MouseEvent>) => {
-      event.cancelBubble = true;
-      if (dragStart.current?.moved) return;
-      if (event.evt.button === 2) return;
-      onSelect(annotation.id, event.evt.ctrlKey || event.evt.metaKey);
-    },
-    onTap: (event: Konva.KonvaEventObject<TouchEvent>) => {
-      event.cancelBubble = true;
-      if (dragStart.current?.moved) return;
-      onSelect(annotation.id, false);
-    },
     onContextMenu: (event: Konva.KonvaEventObject<PointerEvent>) => {
       if (!pickConnection(event)) {
         event.evt.preventDefault();
@@ -1603,6 +1333,7 @@ function MediaStrip({ segments, playheadTime, onSeek, onFreezeDurationChange, tr
     const rect = railRef.current?.getBoundingClientRect();
     if (!rect) return;
     const startClientX = event.clientX;
+    onBeginEdit?.();
     const originalStart = trimStart;
     const originalEnd = trimEnd || sourceDuration;
     const secondsPerPixel = sourceTotal / Math.max(1, rect.width);
@@ -1784,14 +1515,20 @@ export function VideoAnalysisTool({ onHome, onOpenBoard, active = true }: VideoA
   const [trimStart, setTrimStart] = useState(0);
   const [trimEnd, setTrimEnd] = useState(0);
   const [gridMode, setGridMode] = useState<GridMode>('off');
-  const [previewZoom, setPreviewZoom] = useState(1.16);
+  const [previewZoom, setPreviewZoom] = useState(1);
   const [darkMode, setDarkMode] = useState(true);
   const [helpOpen, setHelpOpen] = useState(false);
   const [labelEditor, setLabelEditor] = useState<{ id: string; value: string } | null>(null);
   const [exporting, setExporting] = useState(false);
   const [exportProgress, setExportProgress] = useState(0);
+  const [exportError, setExportError] = useState<string>();
+  const [videoError, setVideoError] = useState<string>();
+  const [includeAudio, setIncludeAudio] = useState(true);
+  const exportAbortRef = useRef<AbortController | null>(null);
+  const clipWorkspaces = useRef(new Map<string, HistorySnapshot & { playheadTime: number; playbackRate: number; undoStack: HistorySnapshot[]; redoStack: HistorySnapshot[] }>());
   const [undoStack, setUndoStack] = useState<HistorySnapshot[]>([]);
   const [redoStack, setRedoStack] = useState<HistorySnapshot[]>([]);
+  const historyGestureRef = useRef(false);
   const videoRef = useRef<HTMLVideoElement | null>(null);
   const stageRef = useRef<Konva.Stage | null>(null);
   const clipsRef = useRef<VideoClip[]>([]);
@@ -1803,7 +1540,8 @@ export function VideoAnalysisTool({ onHome, onOpenBoard, active = true }: VideoA
   const compositionDuration = useMemo(() => timelineDuration(timelineSegments), [timelineSegments]);
   const timelinePosition = useMemo(() => timelineToSource(timelineSegments, playheadTime), [playheadTime, timelineSegments]);
   const previewViewportSize = displaySize(stageWrapSize, currentClip);
-  const stageSize = useMemo(() => scaledSize(previewViewportSize, previewZoom), [previewViewportSize.height, previewViewportSize.width, previewZoom]);
+  const stageSize = previewViewportSize;
+  const videoDisplaySize = useMemo(() => scaledSize(previewViewportSize, previewZoom), [previewViewportSize.height, previewViewportSize.width, previewZoom]);
   const mapper = useMemo(() => makeMapper(stageSize.width, stageSize.height), [stageSize.height, stageSize.width]);
   const selectedAnnotation = annotations.find(annotation => annotation.id === selectedId) ?? annotations.find(annotation => selectedIds.includes(annotation.id));
   const selectedPoints = selectedAnnotation ? pointsAtTime(selectedAnnotation, playheadTime) : undefined;
@@ -1849,6 +1587,8 @@ export function VideoAnalysisTool({ onHome, onOpenBoard, active = true }: VideoA
   };
 
   const chooseTool = (nextTool: VideoTool) => {
+    setPlaying(false);
+    videoRef.current?.pause();
     setTool(nextTool);
     setEditCommand('move');
     setSingleSelection(undefined);
@@ -1862,7 +1602,10 @@ export function VideoAnalysisTool({ onHome, onOpenBoard, active = true }: VideoA
   };
 
   const pushHistory = () => {
-    const snapshot = makeHistorySnapshot(annotations, freezes);
+    if (historyGestureRef.current) return;
+    videoRef.current?.pause();
+    setPlaying(false);
+    const snapshot = makeHistorySnapshot(annotations, freezes, trimStart, trimEnd);
     setUndoStack(current => [...current.slice(-79), snapshot]);
     setRedoStack([]);
   };
@@ -1871,6 +1614,12 @@ export function VideoAnalysisTool({ onHome, onOpenBoard, active = true }: VideoA
     const restored = cloneHistorySnapshot(snapshot);
     setAnnotations(restored.annotations);
     setFreezes(restored.freezes);
+    setTrimStart(restored.trimStart);
+    setTrimEnd(restored.trimEnd);
+    setPlaying(false);
+    const position = timelineToSource(buildTimelineSegments(restored.trimStart, restored.trimEnd, restored.freezes), playheadTime);
+    if (videoRef.current) videoRef.current.currentTime = position.sourceTime;
+    setCurrentTime(position.sourceTime); setPlayheadTime(position.timelineTime);
     setSingleSelection(undefined);
     setDraft(null);
     setSelection(null);
@@ -1882,7 +1631,7 @@ export function VideoAnalysisTool({ onHome, onOpenBoard, active = true }: VideoA
   const undoHistory = () => {
     const previous = undoStack.at(-1);
     if (!previous) return;
-    const currentSnapshot = makeHistorySnapshot(annotations, freezes);
+    const currentSnapshot = makeHistorySnapshot(annotations, freezes, trimStart, trimEnd);
     setUndoStack(current => current.slice(0, -1));
     setRedoStack(current => [...current.slice(-79), currentSnapshot]);
     restoreHistorySnapshot(previous);
@@ -1891,7 +1640,7 @@ export function VideoAnalysisTool({ onHome, onOpenBoard, active = true }: VideoA
   const redoHistory = () => {
     const next = redoStack.at(-1);
     if (!next) return;
-    const currentSnapshot = makeHistorySnapshot(annotations, freezes);
+    const currentSnapshot = makeHistorySnapshot(annotations, freezes, trimStart, trimEnd);
     setRedoStack(current => current.slice(0, -1));
     setUndoStack(current => [...current.slice(-79), currentSnapshot]);
     restoreHistorySnapshot(next);
@@ -1905,6 +1654,7 @@ export function VideoAnalysisTool({ onHome, onOpenBoard, active = true }: VideoA
     if (active) return;
     videoRef.current?.pause();
     setPlaying(false);
+    exportAbortRef.current?.abort();
   }, [active]);
 
   useEffect(() => () => {
@@ -2017,29 +1767,59 @@ export function VideoAnalysisTool({ onHome, onOpenBoard, active = true }: VideoA
     setCurrentClipId(current => current ?? nextClips[0].id);
   }, []);
 
-  const removeClip = (clipId: string) => {
-    setClips(current => {
-      const clip = current.find(item => item.id === clipId);
-      if (clip) URL.revokeObjectURL(clip.url);
-      const remaining = current.filter(item => item.id !== clipId);
-      if (currentClipId === clipId) setCurrentClipId(remaining[0]?.id);
-      return remaining;
+  const switchClip = (nextId?: string) => {
+    if (exporting || nextId === currentClipId) return;
+    videoRef.current?.pause();
+    if (currentClipId) clipWorkspaces.current.set(currentClipId, {
+      ...makeHistorySnapshot(annotations, freezes, trimStart, trimEnd), playheadTime, playbackRate, undoStack, redoStack,
     });
+    const saved = nextId ? clipWorkspaces.current.get(nextId) : undefined;
+    setPlaying(false);
+    setAnnotations(saved?.annotations ?? []);
+    setFreezes(saved?.freezes ?? []);
+    setTrimStart(saved?.trimStart ?? 0);
+    setTrimEnd(saved?.trimEnd ?? 0);
+    setPlayheadTime(saved?.playheadTime ?? 0);
+    setPlaybackRate(saved?.playbackRate ?? 1);
+    setUndoStack(saved?.undoStack ?? []);
+    setRedoStack(saved?.redoStack ?? []);
+    setCurrentTime(0);
+    setSingleSelection(undefined);
+    setDraft(null); setSelection(null); setPolygonDraft([]); clearConnectionDraft();
+    setLabelEditor(null); setVideoError(undefined); setExportError(undefined); setPreviewZoom(1);
+    setCurrentClipId(nextId);
+  };
+
+  const removeClip = (clipId: string) => {
+    if (exporting) return;
+    const clip = clips.find(item => item.id === clipId);
+    const remaining = clips.filter(item => item.id !== clipId);
+    if (currentClipId === clipId) switchClip(remaining[0]?.id);
+    clipWorkspaces.current.delete(clipId);
+    setClips(remaining);
+    if (clip) URL.revokeObjectURL(clip.url);
   };
 
   const updateClipMetadata = (event: React.SyntheticEvent<HTMLVideoElement>) => {
     const video = event.currentTarget;
-    const nextDuration = video.duration || 0;
+    if (video !== videoRef.current) return;
+    const nextDuration = Number.isFinite(video.duration) ? video.duration : 0;
+    if (!nextDuration) { setVideoError('This clip has no readable duration. Try another video file.'); return; }
+    setVideoError(undefined);
     setClips(current => current.map(clip => clip.id === currentClipId ? {
       ...clip,
       duration: nextDuration,
       width: video.videoWidth || clip.width,
       height: video.videoHeight || clip.height,
     } : clip));
-    setTrimStart(0);
-    setTrimEnd(nextDuration);
-    setCurrentTime(0);
-    setPlayheadTime(0);
+    const saved = currentClipId ? clipWorkspaces.current.get(currentClipId) : undefined;
+    const start = saved?.trimStart ?? 0;
+    const end = saved?.trimEnd || nextDuration;
+    const segments = buildTimelineSegments(start, end, saved?.freezes ?? []);
+    const position = timelineToSource(segments, saved?.playheadTime ?? 0);
+    setTrimStart(start); setTrimEnd(end);
+    video.currentTime = position.sourceTime;
+    setCurrentTime(position.sourceTime); setPlayheadTime(position.timelineTime);
   };
 
   const selectAtTime = (time: number) => {
@@ -2054,9 +1834,9 @@ export function VideoAnalysisTool({ onHome, onOpenBoard, active = true }: VideoA
     setPlayheadTime(sourceToTimeline(timelineSegments, safe));
   };
 
-  const selectAtTimeline = (time: number) => {
+  const selectAtTimeline = (time: number, snap = true) => {
     const video = videoRef.current;
-    const snappedTime = snapTimelineTime(time, timelineSegments, 0.08);
+    const snappedTime = snap ? snapTimelineTime(time, timelineSegments, 0.08) : time;
     const position = timelineToSource(timelineSegments, snappedTime);
     if (video) {
       video.pause();
@@ -2199,7 +1979,7 @@ export function VideoAnalysisTool({ onHome, onOpenBoard, active = true }: VideoA
   const translateAnnotationAtTime = (annotationId: string, dx: number, dy: number) => {
     const ids = selectedIds.includes(annotationId) && selectedIds.length ? selectedIds : [annotationId];
     setAnnotations(current => current.map(annotation => {
-      if (!ids.includes(annotation.id)) return annotation;
+      if (!ids.includes(annotation.id) || annotation.locked || (annotation.type === 'connection-line' && annotation.connectionIds?.length)) return annotation;
       const widened = {
         ...annotation,
         startTime: Math.min(annotation.startTime, playheadTime),
@@ -2301,6 +2081,7 @@ export function VideoAnalysisTool({ onHome, onOpenBoard, active = true }: VideoA
 
   const resizeSelected = (axis: 'width' | 'height', value: number) => {
     if (!selectedAnnotation || !selectedBounds || !selectedPoints) return;
+    pushHistory();
     const width = axis === 'width' ? value : selectedBounds.x2 - selectedBounds.x1;
     const height = axis === 'height' ? value : selectedBounds.y2 - selectedBounds.y1;
     moveAnnotationAtTime(selectedAnnotation.id, resizePoints(selectedAnnotation.type, selectedPoints, width, height));
@@ -2359,7 +2140,8 @@ export function VideoAnalysisTool({ onHome, onOpenBoard, active = true }: VideoA
       : freeze));
   };
 
-  const updateTrimRange = (nextStart: number, nextEnd: number) => {
+  const updateTrimRange = (nextStart: number, nextEnd: number, checkpoint = false) => {
+    if (checkpoint) pushHistory();
     const sourceDuration = duration || currentClip?.duration || 0;
     if (!sourceDuration) return;
     const safeStart = clampRange(nextStart, 0, Math.max(0, nextEnd - 0.2));
@@ -2379,6 +2161,28 @@ export function VideoAnalysisTool({ onHome, onOpenBoard, active = true }: VideoA
     setPlayheadTime(position.timelineTime);
     setCurrentTime(position.sourceTime);
   };
+
+  const shortcutActions = useRef({ active, exporting, playheadTime, compositionDuration, togglePlayback, undoHistory, redoHistory, deleteSelected, selectAtTimeline });
+  shortcutActions.current = { active, exporting, playheadTime, compositionDuration, togglePlayback, undoHistory, redoHistory, deleteSelected, selectAtTimeline };
+  useEffect(() => {
+    const keydown = (event: KeyboardEvent) => {
+      const current = shortcutActions.current;
+      if (!current.active) return;
+      if (event.key === 'Escape') {
+        exportAbortRef.current?.abort(); setLabelEditor(null); setHelpOpen(false);
+        setDraft(null); setSelection(null); setPolygonDraft([]); setConnectionDraftIds([]); setTool('select');
+        return;
+      }
+      if (current.exporting || (event.target instanceof HTMLElement && event.target.closest('input,textarea,select,[contenteditable=true]'))) return;
+      const command = event.ctrlKey || event.metaKey;
+      if (command && event.key.toLowerCase() === 'z') { event.preventDefault(); event.shiftKey ? current.redoHistory() : current.undoHistory(); }
+      else if (event.key === ' ') { event.preventDefault(); void current.togglePlayback(); }
+      else if (event.key === 'ArrowLeft' || event.key === 'ArrowRight') { event.preventDefault(); current.selectAtTimeline(clampRange(current.playheadTime + (event.key === 'ArrowLeft' ? -FRAME_STEP_SECONDS : FRAME_STEP_SECONDS), 0, current.compositionDuration), false); }
+      else if (event.key === 'Delete' || event.key === 'Backspace') { event.preventDefault(); current.deleteSelected(); }
+    };
+    window.addEventListener('keydown', keydown);
+    return () => window.removeEventListener('keydown', keydown);
+  }, []);
 
   const exportSnapshot = async () => {
     const video = videoRef.current;
@@ -2401,122 +2205,38 @@ export function VideoAnalysisTool({ onHome, onOpenBoard, active = true }: VideoA
 
   const exportAnalysis = async () => {
     const previewVideo = videoRef.current;
-    if (!previewVideo || !currentClip || exporting) return;
-    setExporting(true);
-    setExportProgress(0);
-    const originalTime = previewVideo.currentTime;
-    const originalRate = previewVideo.playbackRate;
-    previewVideo.pause();
-    setPlaying(false);
-    const exportVideo = document.createElement('video');
-    exportVideo.src = currentClip.url;
-    exportVideo.muted = true;
-    exportVideo.playsInline = true;
-    exportVideo.preload = 'auto';
-    exportVideo.playbackRate = playbackRate;
-    await waitForVideoMetadata(exportVideo);
-    const outputWidth = currentClip.width || exportVideo.videoWidth || previewVideo.videoWidth || 1280;
-    const outputHeight = Math.round(outputWidth / ((currentClip.width || 1280) / (currentClip.height || 720)));
-    const canvas = document.createElement('canvas');
-    canvas.width = outputWidth;
-    canvas.height = outputHeight;
-    const ctx = canvas.getContext('2d');
-    if (!ctx) {
-      exportVideo.pause();
-      exportVideo.removeAttribute('src');
-      exportVideo.load();
-      setExporting(false);
-      return;
-    }
-    const fps = 30;
-    const stream = canvas.captureStream(0);
-    const canvasTrack = stream.getVideoTracks()[0] as CanvasCaptureMediaStreamTrack | undefined;
-    const mimeType = bestVideoMimeType();
-    const recorderOptions: MediaRecorderOptions = {
-      videoBitsPerSecond: Math.max(8_000_000, Math.round(outputWidth * outputHeight * fps * 0.16)),
-    };
-    if (mimeType) recorderOptions.mimeType = mimeType;
-    const recorder = new MediaRecorder(stream, recorderOptions);
-    const chunks: BlobPart[] = [];
-    recorder.ondataavailable = event => {
-      if (event.data.size) chunks.push(event.data);
-    };
-    const stopped = new Promise<void>(resolve => { recorder.onstop = () => resolve(); });
-    const exportSegments = buildTimelineSegments(trimStart, safeTrimEnd || duration, freezes);
-    const totalOutput = Math.max(0.2, timelineDuration(exportSegments));
-    const exportRate = Math.max(0.05, playbackRate || 1);
-    const exportDuration = totalOutput / exportRate;
-    const totalFrames = Math.max(1, Math.ceil(exportDuration * fps));
-
-    const renderFrame = (effectTime: number) => {
-      ctx.fillStyle = '#020617';
-      ctx.fillRect(0, 0, outputWidth, outputHeight);
-      ctx.drawImage(exportVideo, 0, 0, outputWidth, outputHeight);
-      drawCanvasGrid(ctx, gridMode, outputWidth, outputHeight);
-      annotations.slice().sort((a, b) => a.zIndex - b.zIndex).forEach(annotation => drawCanvasAnnotation(ctx, annotation, effectTime, outputWidth, outputHeight, effectTime, annotations));
-      canvasTrack?.requestFrame();
-    };
-
+    if (!previewVideo || !currentClip || !duration || exporting) return;
+    const controller = new AbortController();
+    exportAbortRef.current = controller;
+    const sourceTime = previewVideo.currentTime;
+    const originalPlayhead = playheadTime;
+    previewVideo.pause(); setPlaying(false); setExporting(true); setExportProgress(0); setExportError(undefined);
     try {
-      const initialPosition = timelineToSource(exportSegments, 0);
-      await seekVideo(exportVideo, initialPosition.sourceTime);
-      exportVideo.pause();
-      recorder.start();
-      let activeSegmentId: string | undefined;
-      const startedAt = performance.now();
-      for (let frame = 0; frame < totalFrames; frame += 1) {
-        const outputTime = Math.min(exportDuration, frame / fps);
-        const timelineTime = Math.min(totalOutput, outputTime * exportRate);
-        const position = timelineToSource(exportSegments, timelineTime);
-        const segment = position.segment;
-        if (segment?.id !== activeSegmentId) {
-          activeSegmentId = segment?.id;
-          if (!segment || segment.kind === 'freeze') {
-            exportVideo.pause();
-            if (Math.abs((exportVideo.currentTime || 0) - position.sourceTime) > 0.04) await seekVideo(exportVideo, position.sourceTime);
-          } else {
-            exportVideo.playbackRate = exportRate;
-            if (Math.abs((exportVideo.currentTime || 0) - position.sourceTime) > 0.025) await seekVideo(exportVideo, position.sourceTime);
-            await exportVideo.play().catch(() => undefined);
-          }
-        }
-        if (!segment || segment.kind === 'freeze') exportVideo.pause();
-        else if (Math.abs((exportVideo.currentTime || 0) - position.sourceTime) > 0.04) await seekVideo(exportVideo, position.sourceTime);
-        const frameSourceTime = segment?.kind === 'video'
-          ? clampRange(exportVideo.currentTime || position.sourceTime, segment.sourceStart, segment.sourceEnd)
-          : position.sourceTime;
-        const frameTimelineTime = segment?.kind === 'video'
-          ? segment.timelineStart + (frameSourceTime - segment.sourceStart)
-          : timelineTime;
-        renderFrame(frameTimelineTime);
-        setExportProgress(clampRange(timelineTime / totalOutput, 0, 1));
-        await wait(startedAt + ((frame + 1) / fps) * 1000 - performance.now());
-      }
-      recorder.stop();
-      await stopped;
-      const type = recorder.mimeType || mimeType || 'video/webm';
-      const extension = type.includes('mp4') ? 'mp4' : 'webm';
-      downloadBlob(new Blob(chunks, { type }), `football-video-analysis.${extension}`);
+      const blob = await recordVideoComposition({
+        url: currentClip.url, width: currentClip.width || 1280, height: currentClip.height || 720,
+        segments: buildTimelineSegments(trimStart, safeTrimEnd || duration, freezes), rate: playbackRate,
+        audio: includeAudio, previewElement: previewVideo, signal: controller.signal, onProgress: setExportProgress,
+        drawOverlay: (ctx, time, width, height) => {
+          drawCanvasGrid(ctx, gridMode, width, height);
+          visibleAnnotations.forEach(annotation => drawCanvasAnnotation(ctx, annotation, time, width, height, time, annotations));
+        },
+      });
+      downloadBlob(blob, 'football-video-analysis.' + (blob.type.includes('mp4') ? 'mp4' : 'webm'));
+    } catch (error) {
+      if (!controller.signal.aborted) setExportError(error instanceof Error ? error.message : 'Video export failed. Please try again.');
     } finally {
-      stream.getTracks().forEach(track => track.stop());
-      exportVideo.pause();
-      exportVideo.removeAttribute('src');
-      exportVideo.load();
-      previewVideo.pause();
-      previewVideo.playbackRate = originalRate;
-      setCurrentTime(previewVideo.currentTime || originalTime || 0);
-      setPlayheadTime(sourceToTimeline(timelineSegments, previewVideo.currentTime || originalTime || 0));
-      setExportProgress(0);
-      setExporting(false);
+      exportAbortRef.current = null;
+      if (videoRef.current === previewVideo) { previewVideo.currentTime = sourceTime; setCurrentTime(sourceTime); setPlayheadTime(originalPlayhead); }
+      setExporting(false); setExportProgress(0);
     }
   };
 
-  return <div className={`tactics-shell video-analysis-shell ${touchLayout ? 'video-touch' : ''} ${darkMode ? 'video-dark' : ''} flex h-screen h-[100dvh] flex-col overflow-hidden bg-[#f6f9ff] text-[#0b172a]`}>
-    <header className="video-analysis-header relative z-20 flex h-14 shrink-0 items-center justify-between gap-3 border-b border-white/70 bg-white/70 px-3 backdrop-blur-xl sm:px-4">
+  return <div className={`tactics-shell video-analysis-shell ${touchLayout ? 'video-touch' : ''} ${darkMode ? 'video-dark tactics-dark' : ''} flex h-screen h-[100dvh] flex-col overflow-hidden bg-[#f6f9ff] text-[#0b172a]`}>
+    <header className="board-header video-analysis-header relative z-20 flex h-14 shrink-0 items-center justify-between gap-3 border-b border-white/70 bg-white/70 px-3 backdrop-blur-xl sm:px-4">
       <div className="flex min-w-0 items-center gap-2.5">
-        <img src="/ZTBLogo.png" alt="ZaidTacticsBoard logo" className="h-9 w-9 shrink-0 rounded-full bg-white object-cover p-0.5 shadow-[0_5px_18px_rgba(37,99,235,.28)] ring-1 ring-white/80" />
+        <StudioLogo />
         <div className="min-w-0">
-          <h1 className={`truncate bg-gradient-to-r bg-clip-text text-lg font-black leading-none text-transparent sm:text-xl ${darkMode ? 'from-white via-[#93c5fd] to-[#5eead4]' : 'from-[#07111f] via-[#2563eb] to-[#0f766e]'}`} style={{ fontFamily: '"Segoe UI Variable Display", "Aptos Display", Inter, system-ui, sans-serif' }}>Video Analysis</h1>
+          <h1 className="truncate board-brand text-lg font-bold leading-none sm:text-xl" style={{ fontFamily: '"Segoe UI Variable Display", "Aptos Display", Inter, system-ui, sans-serif' }}>Video Analysis</h1>
           <p className={`mt-0.5 hidden text-[8px] font-black uppercase tracking-[0.24em] sm:block ${darkMode ? 'text-slate-400' : 'text-slate-500'}`}>Football clip studio</p>
         </div>
       </div>
@@ -2524,27 +2244,24 @@ export function VideoAnalysisTool({ onHome, onOpenBoard, active = true }: VideoA
         <button type="button" onClick={() => setHelpOpen(true)} title="Help" className="grid h-9 w-9 place-items-center rounded-lg border border-[#d7e5f6] bg-white/82 text-[#0b172a] hover:border-[#2563eb]"><HelpCircle size={15} /></button>
         <button type="button" onClick={() => setDarkMode(current => !current)} title={darkMode ? 'Switch to light mode' : 'Switch to dark mode'} className="grid h-9 w-9 place-items-center rounded-lg border border-[#d7e5f6] bg-white/82 text-[#0b172a] hover:border-[#2563eb]">{darkMode ? <Sun size={15} /> : <Moon size={15} />}</button>
         <button type="button" onClick={onHome} title="Studio home" className="grid h-9 w-9 place-items-center rounded-lg border border-[#d7e5f6] bg-white/82 text-[#0b172a] hover:border-[#2563eb]"><Home size={15} /></button>
-        <button type="button" onClick={onOpenBoard} className="flex h-9 items-center gap-1.5 rounded-lg border border-[#d7e5f6] bg-white/82 px-2.5 text-xs font-black text-[#0b172a] hover:border-[#2563eb]"><ArrowLeft size={14} /> <span className="hidden sm:inline">Board</span></button>
+        <button type="button" onClick={onOpenBoard} aria-label="Board" className="flex h-9 items-center gap-1.5 rounded-lg border border-[#d7e5f6] bg-white/82 px-2.5 text-xs font-black text-[#0b172a] hover:border-[#2563eb]"><ArrowLeft size={14} /> <span className="hidden sm:inline">Board</span></button>
       </div>
     </header>
 
     {!clips.length && <UploadPanel onFiles={addFiles} />}
 
-    {clips.length > 0 && <main className={`grid min-h-0 flex-1 grid-rows-[minmax(30rem,auto)_minmax(18rem,auto)] gap-0 overflow-y-auto ${touchLayout ? '' : 'lg:grid-cols-[minmax(0,1fr)_390px] lg:grid-rows-1 lg:overflow-hidden'}`}>
+    {clips.length > 0 && <main className={`grid min-h-0 flex-1 grid-rows-[minmax(30rem,auto)_minmax(18rem,auto)] gap-0 overflow-y-auto ${touchLayout ? '' : 'lg:grid-cols-[minmax(0,1fr)_340px] lg:grid-rows-1 lg:overflow-hidden'}`}>
       <section className={`video-canvas-area relative flex min-h-[30rem] flex-col overflow-hidden bg-[linear-gradient(90deg,rgba(37,99,235,.035)_1px,transparent_1px),linear-gradient(0deg,rgba(37,99,235,.035)_1px,transparent_1px),radial-gradient(circle_at_18%_12%,#dbeafe,transparent_32%),linear-gradient(135deg,#f6f9ff,#eef7ff_48%,#fbfbf4)] bg-[size:70px_70px,70px_70px,auto,auto] ${touchLayout ? '' : 'lg:min-h-0'}`}>
-        <div ref={stageWrapRef} className="relative min-h-0 flex-1 overflow-hidden p-1.5">
-          <div className="grid h-full w-full place-items-center">
-            <div className="relative overflow-hidden rounded-xl bg-slate-950 shadow-[0_24px_70px_rgba(11,23,42,.28)] ring-1 ring-[#d7e5f6]" style={{ width: previewViewportSize.width, height: previewViewportSize.height }}>
-              <div className="absolute right-3 top-3 z-30 flex h-9 items-center gap-2 rounded-lg border border-white/15 bg-slate-950/72 px-2 text-white shadow-[0_10px_30px_rgba(2,6,23,.3)] backdrop-blur">
-                <Gauge size={14} />
-                <input aria-label="Preview zoom" type="range" min="1" max="1.7" step="0.02" value={previewZoom} onChange={event => setPreviewZoom(Number(event.target.value))} className="h-7 w-24 accent-[#38bdf8]" />
-                <span className="w-9 text-right text-[10px] font-black tabular-nums">{Math.round(previewZoom * 100)}%</span>
-              </div>
+        <div className="video-preview-toolbar"><span className="truncate">{currentClip?.name}</span><div><button type="button" onClick={() => setPreviewZoom(1)} title="Fit the whole clip">Fit</button><Gauge size={14} /><input aria-label="Preview zoom" type="range" min="1" max="2.5" step="0.05" value={previewZoom} onChange={event => setPreviewZoom(Number(event.target.value))} /><span>{Math.round(previewZoom * 100)}%</span></div></div>
+        {(videoError || exportError) && <div role="alert" className="video-error">{videoError || exportError}<button onClick={() => { setVideoError(undefined); setExportError(undefined); }} aria-label="Dismiss error"><X size={14} /></button></div>}
+        <div ref={stageWrapRef} className="video-preview-scroll relative min-h-0 flex-1 overflow-auto">
+          <div className="video-preview-center grid min-h-full min-w-full place-items-center">
+            <div className="relative overflow-hidden rounded-xl bg-slate-950 shadow-[0_24px_70px_rgba(11,23,42,.28)] ring-1 ring-[#d7e5f6]" style={{ width: videoDisplaySize.width, height: videoDisplaySize.height }}>
               {tool === 'zone' && polygonDraft.length > 0 && <div className="absolute left-3 top-3 z-30 flex gap-1.5 rounded-lg border border-white/15 bg-slate-950/72 p-1 shadow-[0_10px_30px_rgba(2,6,23,.3)] backdrop-blur">
                 <button type="button" onClick={finishPolygonDraft} disabled={polygonDraft.length < 3} className="h-8 rounded-md bg-[#2563eb] px-2 text-[10px] font-black text-white disabled:opacity-45">Close area</button>
                 <button type="button" onClick={() => { setPolygonDraft([]); setPolygonHover(null); }} className="h-8 rounded-md bg-white/12 px-2 text-[10px] font-black text-white">Cancel</button>
               </div>}
-              <div className="absolute left-1/2 top-1/2 touch-none" style={{ width: stageSize.width, height: stageSize.height, transform: 'translate(-50%, -50%)' }}>
+              <div className="absolute left-0 top-0 touch-none" style={{ width: stageSize.width, height: stageSize.height, transform: `scale(${previewZoom})`, transformOrigin: 'top left' }}>
                 {currentClip && <video
                   key={currentClip.id}
                   ref={videoRef}
@@ -2552,6 +2269,7 @@ export function VideoAnalysisTool({ onHome, onOpenBoard, active = true }: VideoA
                   playsInline
                   preload="metadata"
                   onLoadedMetadata={updateClipMetadata}
+                  onError={() => setVideoError('This video could not be opened. Try an MP4 encoded with H.264.')}
                   className="absolute inset-0 h-full w-full object-cover"
                 />}
                 <Stage
@@ -2559,6 +2277,7 @@ export function VideoAnalysisTool({ onHome, onOpenBoard, active = true }: VideoA
                   width={stageSize.width}
                   height={stageSize.height}
                   className="absolute inset-0"
+                  style={{ zIndex: 1 }}
                   onContextMenu={event => {
                     event.evt.preventDefault();
                     if (tool === 'zone' && polygonDraft.length) {
@@ -2694,6 +2413,7 @@ export function VideoAnalysisTool({ onHome, onOpenBoard, active = true }: VideoA
                 </Stage>
               </div>
               {exporting && <div className="absolute inset-x-6 bottom-6 z-30 overflow-hidden rounded-lg bg-white/90 p-2 shadow-[0_12px_40px_rgba(11,23,42,.28)] backdrop-blur">
+                <div className="mb-2 flex items-center justify-between gap-2 text-xs font-semibold text-slate-800"><span>Exporting {Math.round(exportProgress * 100)}%</span><button type="button" onClick={() => exportAbortRef.current?.abort()} className="rounded border border-slate-300 px-2 py-1">Cancel export</button></div>
                 <div className="h-2 overflow-hidden rounded-full bg-[#d7e5f6]">
                   <div className="h-full rounded-full bg-[#2563eb]" style={{ width: `${Math.round(exportProgress * 100)}%` }} />
                 </div>
@@ -2710,17 +2430,17 @@ export function VideoAnalysisTool({ onHome, onOpenBoard, active = true }: VideoA
           sourceDuration={duration || 0}
           onSeek={selectAtTimeline}
           onFreezeDurationChange={updateFreezeDuration}
-          onTrimChange={updateTrimRange}
+          onTrimChange={(start, end) => updateTrimRange(start, end)}
           onBeginEdit={pushHistory}
         />
 
         <div className="shrink-0 border-t border-[#d7e5f6] bg-white/88 p-2 shadow-[0_-18px_50px_rgba(11,23,42,.07)] backdrop-blur">
           <div className="mx-auto flex max-w-6xl flex-wrap items-center gap-2">
-            <button type="button" onClick={() => void togglePlayback()} className="grid h-10 w-10 place-items-center rounded-lg bg-[#2563eb] text-white disabled:opacity-45" disabled={!currentClip}>{playing ? <Pause size={18} /> : <Play size={18} />}</button>
+            <button type="button" aria-label={playing ? 'Pause video' : 'Play video'} onClick={() => void togglePlayback()} className="grid h-10 w-10 place-items-center rounded-lg bg-[#2563eb] text-white disabled:opacity-45" disabled={!currentClip || !duration || exporting || Boolean(videoError)}>{playing ? <Pause size={18} /> : <Play size={18} />}</button>
             <button type="button" title="Undo" onClick={undoHistory} disabled={!undoStack.length} className="grid h-10 w-10 place-items-center rounded-lg border border-[#d7e5f6] bg-white/80 text-[#0b172a] disabled:opacity-35"><Undo2 size={16} /></button>
             <button type="button" title="Redo" onClick={redoHistory} disabled={!redoStack.length} className="grid h-10 w-10 place-items-center rounded-lg border border-[#d7e5f6] bg-white/80 text-[#0b172a] disabled:opacity-35"><Redo2 size={16} /></button>
-            <button type="button" title="Previous frame" onClick={() => selectAtTimeline(Math.max(0, playheadTime - FRAME_STEP_SECONDS))} className="grid h-10 w-10 place-items-center rounded-lg border border-[#d7e5f6] bg-white/80 text-[#0b172a]"><ArrowLeft size={16} /></button>
-            <button type="button" title="Next frame" onClick={() => selectAtTimeline(Math.min(compositionDuration || 0, playheadTime + FRAME_STEP_SECONDS))} className="grid h-10 w-10 place-items-center rounded-lg border border-[#d7e5f6] bg-white/80 text-[#0b172a]"><ArrowRight size={16} /></button>
+            <button type="button" title="Previous frame" onClick={() => selectAtTimeline(Math.max(0, playheadTime - FRAME_STEP_SECONDS), false)} className="grid h-10 w-10 place-items-center rounded-lg border border-[#d7e5f6] bg-white/80 text-[#0b172a]"><ArrowLeft size={16} /></button>
+            <button type="button" title="Next frame" onClick={() => selectAtTimeline(Math.min(compositionDuration || 0, playheadTime + FRAME_STEP_SECONDS), false)} className="grid h-10 w-10 place-items-center rounded-lg border border-[#d7e5f6] bg-white/80 text-[#0b172a]"><ArrowRight size={16} /></button>
             <span className="rounded-lg border border-[#d7e5f6] bg-white/80 px-3 py-2 text-center text-xs font-black tabular-nums text-[#0b172a]">{timeLabel(playheadTime)} / {timeLabel(compositionDuration || 0)}</span>
             <span className="rounded-lg border border-[#d7e5f6] bg-white/80 px-3 py-2 text-[10px] font-black uppercase tracking-[0.14em] text-[#2563eb]">{timelinePosition.segment?.kind === 'freeze' ? 'Freeze image' : 'Video clip'}</span>
             <span className="ml-auto rounded-lg border border-[#d7e5f6] bg-white/80 px-3 py-2 text-[10px] font-black uppercase tracking-[0.14em] text-slate-500">Snap on</span>
@@ -2728,7 +2448,12 @@ export function VideoAnalysisTool({ onHome, onOpenBoard, active = true }: VideoA
         </div>
       </section>
 
-      <aside className={`dock-shell min-h-0 overflow-y-auto border-t border-[#d7e5f6] bg-white/95 shadow-[0_-18px_60px_rgba(11,23,42,.08)] backdrop-blur ${touchLayout ? '' : 'lg:border-l lg:border-t-0'}`}>
+      <aside onPointerDownCapture={event => {
+        if (!(event.target instanceof HTMLInputElement) || event.target.type !== 'range' || !selectedAnnotation) return;
+        pushHistory(); historyGestureRef.current = true;
+        const finish = () => { historyGestureRef.current = false; window.removeEventListener('pointerup', finish); window.removeEventListener('pointercancel', finish); };
+        window.addEventListener('pointerup', finish, { once: true }); window.addEventListener('pointercancel', finish, { once: true });
+      }} className={`dock-shell min-h-0 overflow-y-auto border-t border-[#d7e5f6] bg-white/95 shadow-[0_-18px_60px_rgba(11,23,42,.08)] backdrop-blur ${touchLayout ? '' : 'lg:border-l lg:border-t-0'}`}>
         <div className="grid gap-2 p-2">
           <section className="dock-panel rounded-xl border border-[#d7e5f6] bg-white/76 p-2.5">
             <div className="flex items-center justify-between gap-2">
@@ -2743,9 +2468,9 @@ export function VideoAnalysisTool({ onHome, onOpenBoard, active = true }: VideoA
             </div>
             <div className="mt-2 grid gap-1.5">
               {clips.map(clip => <div key={clip.id} className={`grid grid-cols-[1fr_auto] items-center gap-1.5 rounded-lg border p-1.5 ${clip.id === currentClipId ? 'border-[#2563eb] bg-[#eff6ff]' : 'border-[#d7e5f6] bg-white/80'}`}>
-                <button type="button" onClick={() => setCurrentClipId(clip.id)} className="min-w-0 text-left">
+                <button type="button" onClick={() => switchClip(clip.id)} disabled={exporting} className="min-w-0 text-left">
                   <span className="block truncate text-xs font-black text-[#0b172a]">{clip.name}</span>
-                  <span className="block text-[10px] font-black uppercase tracking-[0.12em] text-slate-500">{clip.duration ? timeLabel(clip.duration) : 'Loading'}</span>
+                  <span className="block text-[10px] font-black uppercase tracking-[0.12em] text-slate-500">{clip.duration ? timeLabel(clip.duration) : 'Ready to open'}</span>
                 </button>
                 <button type="button" title="Remove clip" onClick={() => removeClip(clip.id)} className="grid h-8 w-8 place-items-center rounded-lg bg-red-50 text-red-600 ring-1 ring-red-100"><X size={14} /></button>
               </div>)}
@@ -2902,22 +2627,24 @@ export function VideoAnalysisTool({ onHome, onOpenBoard, active = true }: VideoA
                 </select>
               </label>
               <label className="dock-field space-y-1 text-[10px] font-black uppercase tracking-[0.14em] text-slate-500">In point
-                <input type="number" min="0" max={duration || 0} step="0.1" value={Number(trimStart.toFixed(1))} onChange={event => setTrimStart(clampRange(Number(event.target.value) || 0, 0, Math.max(0, safeTrimEnd - 0.2)))} className="h-9 w-full rounded-lg border border-[#d7e5f6] bg-white/80 px-2 text-sm font-semibold normal-case tracking-normal text-[#0b172a]" />
+                <input type="number" min="0" max={duration || 0} step="0.1" value={Number(trimStart.toFixed(1))} onChange={event => updateTrimRange(Number(event.target.value) || 0, safeTrimEnd, true)} className="h-9 w-full rounded-lg border border-[#d7e5f6] bg-white/80 px-2 text-sm font-semibold normal-case tracking-normal text-[#0b172a]" />
               </label>
               <label className="dock-field space-y-1 text-[10px] font-black uppercase tracking-[0.14em] text-slate-500">Out point
-                <input type="number" min="0" max={duration || 0} step="0.1" value={Number((safeTrimEnd || 0).toFixed(1))} onChange={event => setTrimEnd(clampRange(Number(event.target.value) || duration, trimStart + 0.2, duration || Number(event.target.value)))} className="h-9 w-full rounded-lg border border-[#d7e5f6] bg-white/80 px-2 text-sm font-semibold normal-case tracking-normal text-[#0b172a]" />
+                <input type="number" min="0" max={duration || 0} step="0.1" value={Number((safeTrimEnd || 0).toFixed(1))} onChange={event => updateTrimRange(trimStart, Number(event.target.value) || duration, true)} className="h-9 w-full rounded-lg border border-[#d7e5f6] bg-white/80 px-2 text-sm font-semibold normal-case tracking-normal text-[#0b172a]" />
               </label>
-              <button type="button" onClick={() => setTrimStart(clampRange(currentTime, 0, Math.max(0, safeTrimEnd - 0.2)))} className="h-9 rounded-lg border border-[#d7e5f6] bg-white/80 text-xs font-black text-[#0b172a]">Set In</button>
-              <button type="button" onClick={() => setTrimEnd(clampRange(currentTime, trimStart + 0.2, duration || currentTime))} className="h-9 rounded-lg border border-[#d7e5f6] bg-white/80 text-xs font-black text-[#0b172a]">Set Out</button>
+              <button type="button" onClick={() => updateTrimRange(currentTime, safeTrimEnd, true)} className="h-9 rounded-lg border border-[#d7e5f6] bg-white/80 text-xs font-black text-[#0b172a]">Set In</button>
+              <button type="button" onClick={() => updateTrimRange(trimStart, currentTime, true)} className="h-9 rounded-lg border border-[#d7e5f6] bg-white/80 text-xs font-black text-[#0b172a]">Set Out</button>
             </div>
           </section>
 
           <section className="dock-panel rounded-xl border border-[#d7e5f6] bg-white/76 p-2.5">
             <p className="mb-2 text-[10px] font-black uppercase tracking-[0.18em] text-[#2563eb]">Export</p>
+            <label className="mb-3 flex items-center gap-2 text-xs font-semibold"><input type="checkbox" checked={includeAudio} onChange={event => setIncludeAudio(event.target.checked)} />Include source audio</label>
             <div className="grid grid-cols-2 gap-2">
-              <button type="button" onClick={() => void exportSnapshot()} disabled={!currentClip || exporting} className="flex h-10 items-center justify-center gap-2 rounded-lg border border-[#d7e5f6] bg-white/80 text-sm font-black text-[#0b172a] disabled:opacity-40"><Scissors size={16} /> PNG</button>
+              <button type="button" onClick={() => void exportSnapshot()} disabled={!currentClip || !duration || exporting || Boolean(videoError)} className="flex h-10 items-center justify-center gap-2 rounded-lg border border-[#d7e5f6] bg-white/80 text-sm font-black text-[#0b172a] disabled:opacity-40"><Scissors size={16} /> PNG</button>
               <button type="button" onClick={() => void exportAnalysis()} disabled={!currentClip || exporting} className="flex h-10 items-center justify-center gap-2 rounded-lg bg-[#2563eb] text-sm font-black text-white disabled:opacity-40">{exporting ? <Gauge size={16} /> : <Download size={16} />} MP4</button>
             </div>
+            <p className="mt-2 text-[10px] text-slate-500">Keep this tab visible until the export finishes.</p>
           </section>
         </div>
       </aside>
@@ -2934,7 +2661,7 @@ export function VideoAnalysisTool({ onHome, onOpenBoard, active = true }: VideoA
         <div className="grid gap-2 text-sm font-semibold text-slate-600 sm:grid-cols-2">
           <div className="rounded-lg border border-[#d7e5f6] bg-[#f8fbff] p-3"><span className="block text-xs font-black text-[#0b172a]">Move</span>Use Move for normal work. Dragging an overlay moves the whole object only and creates or updates its keyframe at the playhead.</div>
           <div className="rounded-lg border border-[#d7e5f6] bg-[#f8fbff] p-3"><span className="block text-xs font-black text-[#0b172a]">Shape</span>Use Shape when you want point handles, resize handles, or line bend controls. Switch back to Move before repositioning.</div>
-          <div className="rounded-lg border border-[#d7e5f6] bg-[#f8fbff] p-3"><span className="block text-xs font-black text-[#0b172a]">Lines</span>Drag on the video to place pass arrows, dashed lines, and carry runs. The same tool stays active for the next line.</div>
+          <div className="rounded-lg border border-[#d7e5f6] bg-[#f8fbff] p-3"><span className="block text-xs font-black text-[#0b172a]">Lines</span>Drag on the video to place pass arrows, dashed lines, and carry runs. The editor returns to Select after placing a line.</div>
           <div className="rounded-lg border border-[#d7e5f6] bg-[#f8fbff] p-3"><span className="block text-xs font-black text-[#0b172a]">Tactical area</span>Left-click to add as many points as needed. Right-click or tap Close area to connect the shape.</div>
           <div className="rounded-lg border border-[#d7e5f6] bg-[#f8fbff] p-3"><span className="block text-xs font-black text-[#0b172a]">Player disc</span>Click or drag to place a disc. Turn the name on in Style, then edit the label text.</div>
           <div className="rounded-lg border border-[#d7e5f6] bg-[#f8fbff] p-3"><span className="block text-xs font-black text-[#0b172a]">Connections</span>Choose Player disc, right-click one disc, then right-click another disc to link them.</div>

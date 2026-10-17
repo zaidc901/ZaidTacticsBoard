@@ -1,3 +1,5 @@
+import { boardZoomMin, BOARD_ZOOM_MAX, BOARD_ZOOM_STEP, clampBoardZoom } from '../utils/boardZoom';
+import { useShallow } from 'zustand/react/shallow';
 import { useEffect, useRef, useState } from 'react';
 import { AlertTriangle, BadgeHelp, Circle as CircleIcon, CircleDot, Copy, Download, Eraser, Eye, EyeOff, Film, Frown, ImageDown, ImagePlus, Link2, Minus, MousePointer2, MoveHorizontal, MoveRight, MoveVertical, Palette, PanelBottom, PanelRight, Pencil, Play, Plus, Redo2, RotateCcw, Route, Settings2, Shield, SlidersHorizontal, Square, Trash2, Type, Undo2, Unlink2, UserMinus, UsersRound } from 'lucide-react';
 import { formations, FormationKey } from '../data/formations';
@@ -308,14 +310,14 @@ function panelClass(extra = '', dark = false) {
 }
 
 function ToolRail({ vertical = false, compact = false }: { vertical?: boolean; compact?: boolean }) {
-  const { project, tool, setTool } = useTacticsStore();
+  const { project, tool, setTool } = useTacticsStore(useShallow(state => ({ project: state.project, tool: state.tool, setTool: state.setTool })));
   const dark = project.settings.theme === 'dark';
   const sectionClass = dark ? 'border-slate-700 bg-slate-900/80' : 'border-[#d7e5f6] bg-white/80';
   const idleToolClass = dark ? 'bg-slate-800 text-slate-100 hover:bg-slate-700' : 'bg-white/90 text-[#0b172a] hover:bg-[#eff6ff]';
   return <div className={vertical ? 'grid gap-2' : `flex min-w-max items-stretch ${compact ? 'gap-1' : 'gap-2'}`}>
     {toolSections.map(section => <section key={section.id} className={`${vertical ? 'grid grid-cols-2 gap-1' : 'flex items-center gap-1'} ${compact ? 'rounded-lg border-0 bg-transparent p-0' : 'rounded-xl border p-1'} ${compact ? '' : sectionClass}`}>
       <span className={`${vertical ? 'col-span-2 px-2 pt-1' : compact ? 'px-1' : 'px-1'} text-[8px] font-black uppercase tracking-[0.14em] ${dark ? 'text-slate-400' : 'text-slate-500'}`}>{section.label}</span>
-      {section.tools.map(({ id, label, icon: Icon }) => <button key={id} title={label} onClick={() => setTool(id)} className={`flex ${compact ? 'h-7 px-1.5 text-[9px]' : 'h-8 px-2 text-[10px]'} items-center gap-1.5 rounded-lg font-black transition ${tool === id ? 'bg-[#2563eb] text-white shadow-[0_10px_24px_rgba(37,99,235,.22)]' : idleToolClass}`}>
+      {section.tools.map(({ id, label, icon: Icon }) => <button key={id} title={label} aria-label={label} aria-pressed={tool === id} onClick={() => setTool(id)} className={`flex ${compact ? 'h-7 px-1.5 text-[9px]' : 'h-8 px-2 text-[10px]'} items-center gap-1.5 rounded-lg font-black transition ${tool === id ? 'bg-[#2563eb] text-white shadow-[0_10px_24px_rgba(37,99,235,.22)]' : idleToolClass}`}>
         <Icon size={15} />
         <span>{label}</span>
       </button>)}
@@ -324,8 +326,22 @@ function ToolRail({ vertical = false, compact = false }: { vertical?: boolean; c
   </div>;
 }
 
+/** Persistent drawing tools stay beside the canvas while settings scroll independently. */
+export function BoardToolbox() {
+  const tool = useTacticsStore(s => s.tool);
+  const setTool = useTacticsStore(s => s.setTool);
+  return <nav className="board-toolbox" aria-label="Board tools">
+    {toolSections.map(section => <div key={section.id} className="board-tool-group">
+      <span className="board-tool-group-label">{section.label}</span>
+      {section.tools.map(({ id, label, icon: Icon }) => <button key={id} type="button" title={label} aria-label={label} aria-pressed={tool === id} onClick={() => setTool(id)} className="board-tool-button">
+        <Icon size={19} /><span className="board-tool-tooltip">{label}</span>
+      </button>)}
+    </div>)}
+  </nav>;
+}
+
 export function QuickActions({ embedded = false }: { embedded?: boolean } = {}) {
-  const { project, selectedIds, historyPast, historyFuture, undoLastDrawing, redoLastDrawing, duplicateSelectedDrawings, removeSelectedDrawings, clearDrawings } = useTacticsStore();
+  const { project, selectedIds, historyPast, historyFuture, undoLastDrawing, redoLastDrawing, duplicateSelectedDrawings, removeSelectedDrawings, clearDrawings } = useTacticsStore(useShallow(state => ({ project: state.project, selectedIds: state.selectedIds, historyPast: state.historyPast, historyFuture: state.historyFuture, undoLastDrawing: state.undoLastDrawing, redoLastDrawing: state.redoLastDrawing, duplicateSelectedDrawings: state.duplicateSelectedDrawings, removeSelectedDrawings: state.removeSelectedDrawings, clearDrawings: state.clearDrawings })));
   const dark = project.settings.theme === 'dark';
   const selectedCount = project.drawings.filter(drawing => selectedIds.includes(drawing.id)).length;
   const buttonClass = dark ? 'border-slate-700 bg-slate-950/90 text-slate-100 hover:bg-slate-900' : 'border-[#d7e5f6] bg-white/92 text-[#0b172a] hover:border-[#2563eb]';
@@ -343,16 +359,16 @@ export function QuickActions({ embedded = false }: { embedded?: boolean } = {}) 
 }
 
 export function PitchScaleControl({ embedded = false }: { embedded?: boolean } = {}) {
-  const { project, viewZoom, setViewZoom } = useTacticsStore();
+  const { project, viewZoom, setViewZoom } = useTacticsStore(useShallow(state => ({ project: state.project, viewZoom: state.viewZoom, setViewZoom: state.setViewZoom })));
   const dark = project.settings.theme === 'dark';
   const touchControls = useMediaQuery('(pointer: coarse), (max-width: 767px)');
-  const maxZoom = touchControls ? 2.4 : 1.35;
-  const zoomStep = touchControls ? 0.1 : 0.05;
-  const setZoom = (zoom: number) => setViewZoom(Math.max(0.35, Math.min(maxZoom, zoom)));
-  const setZoomRaf = useRafCommit(setZoom);
+  const maxZoom = BOARD_ZOOM_MAX;
+  const zoomStep = BOARD_ZOOM_STEP;
+  const setZoom = (zoom: number) => setViewZoom(clampBoardZoom(zoom, project.settings.format));
   useEffect(() => {
-    if (viewZoom > maxZoom) setViewZoom(maxZoom);
-  }, [maxZoom, setViewZoom, viewZoom]);
+    const clamped = clampBoardZoom(viewZoom, project.settings.format);
+    if (viewZoom !== clamped) setViewZoom(clamped);
+  }, [project.settings.format, setViewZoom, viewZoom]);
   const shellClass = dark ? 'border-slate-700 bg-slate-950/90 text-slate-100' : 'border-[#d7e5f6] bg-white/90 text-[#0b172a]';
   const buttonClass = dark ? 'hover:bg-slate-800' : 'hover:bg-[#eff6ff]';
   const sliderWidthClass = touchControls ? 'w-24 sm:w-36' : embedded ? 'w-16 xl:w-24' : 'w-20 sm:w-28';
@@ -360,7 +376,7 @@ export function PitchScaleControl({ embedded = false }: { embedded?: boolean } =
     <button aria-label="Zoom pitch out" title="Zoom pitch out" onClick={() => setZoom(viewZoom - zoomStep)} className={`grid h-7 w-7 place-items-center rounded-lg ${buttonClass}`}><Minus size={14} /></button>
     <label className="flex items-center gap-2" title="Pitch scale">
       <SlidersHorizontal size={14} className="text-[#2563eb]" />
-      <input aria-label="Pitch scale" type="range" min="0.35" max={maxZoom} step="0.01" value={Math.min(viewZoom, maxZoom)} onChange={event => setZoomRaf(Number(event.target.value))} className={`${sliderWidthClass} accent-[#2563eb]`} />
+      <input aria-label="Pitch scale" type="range" min={boardZoomMin(project.settings.format)} max={maxZoom} step="0.01" value={Math.min(viewZoom, maxZoom)} onChange={event => setZoom(Number(event.target.value))} className={`${sliderWidthClass} accent-[#2563eb]`} />
       <span className="w-9 text-right text-[10px] font-black">{Math.round(viewZoom * 100)}%</span>
     </label>
     <button aria-label="Zoom pitch in" title="Zoom pitch in" onClick={() => setZoom(viewZoom + zoomStep)} className={`grid h-7 w-7 place-items-center rounded-lg ${buttonClass}`}><Plus size={14} /></button>
@@ -368,7 +384,7 @@ export function PitchScaleControl({ embedded = false }: { embedded?: boolean } =
 }
 
 export function DockModeSwitcher({ embedded = false }: { embedded?: boolean } = {}) {
-  const { project, dockPosition, setDockPosition } = useTacticsStore();
+  const { project, dockPosition, setDockPosition } = useTacticsStore(useShallow(state => ({ project: state.project, dockPosition: state.dockPosition, setDockPosition: state.setDockPosition })));
   const dark = project.settings.theme === 'dark';
   const touchControls = useMediaQuery('(pointer: coarse), (max-width: 767px)');
   const effectiveDockPosition = touchControls && dockPosition === 'right' ? 'bottom' : dockPosition;
@@ -383,9 +399,9 @@ export function DockModeSwitcher({ embedded = false }: { embedded?: boolean } = 
 }
 
 function WorkspaceTabs({ side = false }: { side?: boolean }) {
-  const { dockTab: tab, setDockTab: setTab, project } = useTacticsStore();
+  const { dockTab: tab, setDockTab: setTab, project } = useTacticsStore(useShallow(state => ({ dockTab: state.dockTab, setDockTab: state.setDockTab, project: state.project })));
   const dark = project.settings.theme === 'dark';
-  return <nav aria-label="Workspace" className={side ? 'grid w-full grid-cols-3 gap-1.5' : 'flex min-w-max items-center gap-1'}>
+  return <nav aria-label="Workspace" className={side ? 'inspector-tabs' : 'flex min-w-max items-center gap-1'}>
     {tabs.map(({ id, label, icon: Icon }) => <button key={id} aria-pressed={tab === id} onClick={() => setTab(id)} className={`flex h-8 items-center justify-center gap-1.5 px-2.5 ${side ? '' : 'whitespace-nowrap'} ${tab === id ? 'bg-[#2563eb] text-white shadow-[0_8px_18px_rgba(37,99,235,.2)]' : dark ? 'border border-slate-700 bg-slate-900 text-slate-200 hover:border-slate-500' : 'border border-[#d7e5f6] bg-white/80 text-[#0b172a] hover:border-[#93c5fd] hover:bg-[#eff6ff]'}`}>
       <Icon size={14} />
       <span>{label}</span>
@@ -394,15 +410,14 @@ function WorkspaceTabs({ side = false }: { side?: boolean }) {
 }
 
 function PagePanel() {
-  const { project, viewZoom, setViewZoom, setBoardFormat, updateSettings, updateBall, resetElevenAside } = useTacticsStore();
+  const { project, viewZoom, setViewZoom, setBoardFormat, updateSettings, updateBall, resetElevenAside } = useTacticsStore(useShallow(state => ({ project: state.project, viewZoom: state.viewZoom, setViewZoom: state.setViewZoom, setBoardFormat: state.setBoardFormat, updateSettings: state.updateSettings, updateBall: state.updateBall, resetElevenAside: state.resetElevenAside })));
   const dark = project.settings.theme === 'dark';
   const pitchScaleX = project.settings.pitchScaleX ?? 1;
   const pitchScaleY = project.settings.pitchScaleY ?? 1;
-  const setZoomRaf = useRafCommit(setViewZoom);
   const updateSettingsRaf = useRafCommit((patch: Partial<BoardSettings>) => updateSettings(patch));
   const resetBoard = () => {
     resetElevenAside();
-    setViewZoom(1.08);
+    setViewZoom(1);
   };
   return <div className="dock-page-grid grid gap-2 lg:grid-cols-2 xl:grid-cols-[.85fr_1.05fr_1.15fr_1.1fr]">
     <section className={panelClass('space-y-2', dark)}>
@@ -416,7 +431,7 @@ function PagePanel() {
         <p className="text-[10px] font-black uppercase tracking-[0.22em] text-[#2563eb]">Pitch scale</p>
         <span className="flex items-center gap-1 text-xs font-black text-[#0b172a]"><SlidersHorizontal size={14} /> {Math.round(viewZoom * 100)}%</span>
       </div>
-      <input type="range" min="0.35" max="1.35" step="0.01" value={viewZoom} onChange={e => setZoomRaf(Number(e.target.value))} className="w-full accent-[#2563eb]" />
+      <input aria-label="Pitch scale in settings" type="range" min={boardZoomMin(project.settings.format)} max={BOARD_ZOOM_MAX} step="0.01" value={viewZoom} onChange={e => setViewZoom(Number(e.target.value))} className="w-full accent-[#2563eb]" />
       <div className="grid grid-cols-2 gap-2">
         <ColorField label="Grass" value={project.settings.grassColor} onChange={v => updateSettings({ grassColor: v })} />
         <ColorField label="Lines" value={project.settings.lineColor} onChange={v => updateSettings({ lineColor: v })} />
@@ -464,7 +479,7 @@ function PagePanel() {
 }
 
 function SquadPanel() {
-  const { project, selectedId, select, updateTeam, setTeamKitVariant, updateTeamKit, addPlayer, applyFormation, setTeamPlayerCount } = useTacticsStore();
+  const { project, selectedId, select, updateTeam, setTeamKitVariant, updateTeamKit, addPlayer, applyFormation, setTeamPlayerCount } = useTacticsStore(useShallow(state => ({ project: state.project, selectedId: state.selectedId, select: state.select, updateTeam: state.updateTeam, setTeamKitVariant: state.setTeamKitVariant, updateTeamKit: state.updateTeamKit, addPlayer: state.addPlayer, applyFormation: state.applyFormation, setTeamPlayerCount: state.setTeamPlayerCount })));
   const dark = project.settings.theme === 'dark';
   return <div className="space-y-3">
     <div className="dock-team-grid grid gap-3 lg:grid-cols-2">
@@ -535,7 +550,7 @@ function SquadPanel() {
 }
 
 function PresetTeamsPanel() {
-  const { project, playing, updateTeam } = useTacticsStore();
+  const { project, playing, updateTeam } = useTacticsStore(useShallow(state => ({ project: state.project, playing: state.playing, updateTeam: state.updateTeam })));
   const dark = project.settings.theme === 'dark';
   const [teamId, setTeamId] = useState(project.teams[0]?.id ?? '');
   const [collectionId, setCollectionId] = useState<PresetCollectionId>('premier-league');
@@ -584,7 +599,7 @@ function PresetTeamsPanel() {
 }
 
 function PlayerEditPanel() {
-  const { project, selectedId, updatePlayer, setPlayerStarter, removePlayer, duplicatePlayer, checkpointHistory } = useTacticsStore();
+  const { project, selectedId, updatePlayer, setPlayerStarter, removePlayer, duplicatePlayer, checkpointHistory } = useTacticsStore(useShallow(state => ({ project: state.project, selectedId: state.selectedId, updatePlayer: state.updatePlayer, setPlayerStarter: state.setPlayerStarter, removePlayer: state.removePlayer, duplicatePlayer: state.duplicatePlayer, checkpointHistory: state.checkpointHistory })));
   const selectedPlayer = project.teams.flatMap(t => t.squad).find(p => p.id === selectedId);
   const dark = project.settings.theme === 'dark';
   return <div className="w-full">
@@ -610,7 +625,7 @@ function PlayerEditPanel() {
 }
 
 function StylePanel() {
-  const { project, selectedId, selectedIds, tool, toolStyle, setToolStyle, updateSettings, updatePlayer, updateDrawing, addDrawing, dockPosition } = useTacticsStore();
+  const { project, selectedId, selectedIds, tool, toolStyle, setToolStyle, updateSettings, updatePlayer, updateDrawing, addDrawing, dockPosition } = useTacticsStore(useShallow(state => ({ project: state.project, selectedId: state.selectedId, selectedIds: state.selectedIds, tool: state.tool, toolStyle: state.toolStyle, setToolStyle: state.setToolStyle, updateSettings: state.updateSettings, updatePlayer: state.updatePlayer, updateDrawing: state.updateDrawing, addDrawing: state.addDrawing, dockPosition: state.dockPosition })));
   const selectedDrawing = project.drawings.find(d => d.id === selectedId);
   const selectedDrawings = project.drawings.filter(drawing => selectedIds.includes(drawing.id));
   const selectedPlayers = project.teams.flatMap(team => team.squad).filter(player => player.starter && selectedIds.includes(player.id));
@@ -762,7 +777,7 @@ function StylePanel() {
 }
 
 function ScenesPanel({ onPreviewAnimation, onExportVideo }: Pick<ControlDockProps, 'onPreviewAnimation' | 'onExportVideo'>) {
-  const { project, addScene, applyScene, duplicateScene, deleteScene, renameScene, updateScene, playing } = useTacticsStore();
+  const { project, addScene, applyScene, duplicateScene, deleteScene, renameScene, updateScene, playing } = useTacticsStore(useShallow(state => ({ project: state.project, addScene: state.addScene, applyScene: state.applyScene, duplicateScene: state.duplicateScene, deleteScene: state.deleteScene, renameScene: state.renameScene, updateScene: state.updateScene, playing: state.playing })));
   const dark = project.settings.theme === 'dark';
   const [region, setRegion] = useState<ExportRegion>('full');
   const exportRegions = exportRegionsFor(project.settings.format);
@@ -806,7 +821,7 @@ function ScenesPanel({ onPreviewAnimation, onExportVideo }: Pick<ControlDockProp
 }
 
 function ExportPanel({ onExportImage, onExportVideo }: Pick<ControlDockProps, 'onExportImage' | 'onExportVideo'>) {
-  const { project, playing } = useTacticsStore();
+  const { project, playing } = useTacticsStore(useShallow(state => ({ project: state.project, playing: state.playing })));
   const [region, setRegion] = useState<ExportRegion>('full');
   const exportRegions = exportRegionsFor(project.settings.format);
   useEffect(() => {
@@ -830,32 +845,20 @@ function ExportPanel({ onExportImage, onExportVideo }: Pick<ControlDockProps, 'o
 }
 
 export function ControlDock({ forceBottomDock = false, onExportImage, onPreviewAnimation, onExportVideo }: ControlDockProps) {
-  const { dockTab: tab, dockPosition } = useTacticsStore();
+  const { dockTab: tab, dockPosition } = useTacticsStore(useShallow(state => ({ dockTab: state.dockTab, dockPosition: state.dockPosition })));
   const dark = useTacticsStore(s => s.project.settings.theme === 'dark');
   const side = dockPosition === 'right' && !forceBottomDock;
-  return <footer className={`dock-shell ${side ? 'dock-side h-full w-[min(420px,90vw)] shrink-0 border-l' : 'dock-bottom h-[clamp(220px,27dvh,260px)] shrink-0 border-t'} min-h-0 overflow-hidden shadow-[0_-18px_60px_rgba(11,23,42,.08)] backdrop-blur ${dark ? 'border-slate-700 bg-slate-950/95' : 'border-[#d7e5f6] bg-white/95'}`}>
+  return <footer className={`dock-shell ${side ? 'dock-side h-full w-[340px] shrink-0 border-l' : 'dock-bottom h-[clamp(220px,27dvh,260px)] shrink-0 border-t'} min-h-0 overflow-hidden shadow-[0_-18px_60px_rgba(11,23,42,.08)] backdrop-blur ${dark ? 'border-slate-700 bg-slate-950/95' : 'border-[#d7e5f6] bg-white/95'}`}>
     <div className="mx-auto flex h-full max-w-[1680px] flex-col">
       {side ? <>
-        <div className={`flex shrink-0 flex-col gap-1.5 border-b p-1.5 ${dark ? 'border-slate-700' : 'border-[#d7e5f6]'}`}>
-          <div className="flex items-center justify-between gap-2"><QuickActions embedded /><DockModeSwitcher embedded /></div>
-          <PitchScaleControl embedded />
-        </div>
-        <div className="max-h-[34dvh] shrink-0 overflow-y-auto overscroll-contain p-1.5"><ToolRail vertical /></div>
-        <div className={`flex shrink-0 flex-col items-stretch gap-2 overflow-x-auto border-y px-2 py-1.5 ${dark ? 'border-slate-700' : 'border-[#d7e5f6]'}`}>
-          <span className={`shrink-0 text-[9px] font-black uppercase tracking-[0.18em] ${dark ? 'text-slate-400' : 'text-slate-500'}`}>Workspace</span>
-          <WorkspaceTabs side />
-        </div>
+        <div className="inspector-heading"><div><span className="inspector-eyebrow">WORKSPACE</span><h2>{tabs.find(item => item.id === tab)?.label}</h2></div><DockModeSwitcher embedded /></div>
+        <div className="inspector-nav"><WorkspaceTabs side /></div>
       </> : <>
         <div className={`dock-command-row flex h-11 shrink-0 items-center gap-2 overflow-x-auto border-b px-2 ${dark ? 'border-slate-700' : 'border-[#d7e5f6]'}`}>
-          <div className="flex min-w-max items-center gap-2">
-            <WorkspaceTabs />
-            <span className={`h-6 w-px ${dark ? 'bg-slate-700' : 'bg-[#d7e5f6]'}`} />
-            <QuickActions embedded />
-            <PitchScaleControl embedded />
-            <DockModeSwitcher embedded />
-          </div>
+          <div className="min-w-0 flex-1 overflow-x-auto py-1"><WorkspaceTabs /></div>
+          <DockModeSwitcher embedded />
         </div>
-        <div className={`dock-tool-row flex h-11 shrink-0 items-center gap-2 border-b px-2 ${dark ? 'border-slate-700' : 'border-[#d7e5f6]'}`}>
+        <div className={`dock-tool-row mobile-tool-row flex h-11 shrink-0 items-center gap-2 border-b px-2 ${dark ? 'border-slate-700' : 'border-[#d7e5f6]'}`}>
           <span className={`shrink-0 text-[9px] font-black uppercase tracking-[0.16em] ${dark ? 'text-slate-400' : 'text-slate-500'}`}>Board tools</span>
           <div className="min-w-0 flex-1 overflow-x-auto overscroll-contain py-1"><ToolRail compact /></div>
         </div>

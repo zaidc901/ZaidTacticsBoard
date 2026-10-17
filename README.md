@@ -70,9 +70,9 @@ The home screen links to the standalone game in `public/stretfordgauntlet/`. Vit
 
 ## Usage Guide
 
-1. Use the bottom dock tabs to edit the page, squads, preset teams, selected players, scenes, and exports.
-2. Drag markers and the ball on the central pitch.
-3. Pick a tool from the dock:
+1. Use the right inspector to edit the pitch, squads, preset teams, selected players, scenes, and exports. You can also switch to a bottom menu or hide it.
+2. Drag markers and the ball on the central pitch. Shift-click (or Ctrl/Cmd-click) to select multiple items; group moves preserve their spacing at the pitch boundaries.
+3. Pick a tool from the left rail, or the horizontal tools row on mobile:
    - Select
    - Pass arrow
    - Long pass
@@ -84,6 +84,20 @@ The home screen links to the standalone game in `public/stretfordgauntlet/`. Vit
 4. Upload a custom badge from the Edit tab, or hide preset flags from Page or Preset teams.
 5. Select three or more players and use Style to create an area that follows them or stays fixed.
 6. Use Scenes to capture, duplicate, delete, restore, preview, and export tactical states.
+
+Portrait 100% is a close working view, 1.5 times the full-board overview; **Fit** shows the whole portrait board at about 67%. Portrait zoom ranges from 50% to 300%. Landscape keeps its full-board view at 100%, with an 80% to 300% range. Display transforms keep zoom responsive, then the canvas redraws at the displayed resolution after zooming settles, within a bounded memory budget. Undo, redo, selection actions, and zoom stay below the canvas while inspector settings scroll independently.
+
+## Local verification
+
+Run `npm test` for movement constraints, locked objects, group movement, undo/redo, linked areas, scene restoration, and transient-state persistence checks. Run `npm run build` for TypeScript and production-build validation. Before deploying UI changes, also verify dragging, drawing, bench transfers, zoom, export, and responsive layouts in the local preview. The deployment workflow runs the interaction tests before building.
+
+## Video studio
+
+The video preview fits landscape and portrait clips, with independent scroll and zoom. Each clip keeps its own overlays, freezes, trim range, undo history, and playhead while switching clips or returning from the board. Uploaded files remain in memory for the current tab session; reloading the page clears them.
+
+Use Space to play/pause, Left/Right to step frames, Ctrl/Cmd+Z to undo, Shift+Ctrl/Cmd+Z to redo, Delete to remove selected overlays, and Escape to cancel the current tool or export. Text fields keep their usual keyboard behavior.
+
+Video exports include source audio by default, with silence during freeze frames. Uncheck **Include source audio** for a silent export. Recording runs in real time: keep the editor visible until it finishes, or use **Cancel export**. The downloaded container follows the browser's supported recording formats (MP4 or WebM).
 
 ## Export Notes
 
