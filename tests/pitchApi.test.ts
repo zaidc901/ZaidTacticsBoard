@@ -15,8 +15,15 @@ test('relay restricts origins, keys and exact provider paths',async()=>{
 });
 test('relay forwards credentials only to fixed PitchAPI host, prevents redirects and does not cache',async()=>{
  let target='',headers:any;
- const response=await proxyPitchApi(request(),{},async(url:string,options:any)=>{target=url;headers=options.headers;assert.equal(options.redirect,'error');return Response.json({data:{leagues:[]},ignored:'metadata'});});
+ const response=await proxyPitchApi(request(),{},async(url:string,options:any)=>{target=url;headers=options.headers;assert.equal(options.redirect,'manual');return Response.json({data:{leagues:[]},ignored:'metadata'});});
  assert.equal(target,'https://api.pitchapi.dev/v1/leagues');assert.equal(headers['X-API-KEY'],fakeKey);assert.equal(response.headers.get('cache-control'),'no-store');assert.equal(response.headers.get('access-control-allow-origin'),'https://zaidtacticsboard.com');assert.deepEqual(await response.json(),{data:{leagues:[]}});
+});
+test('relay rejects redirects without forwarding credentials to another host',async()=>{
+ for(const status of [301,302,303,307,308]) {
+  let calls=0;
+  const response=await proxyPitchApi(request(),{},async(url:string,options:any)=>{calls++;assert.equal(url,'https://api.pitchapi.dev/v1/leagues');assert.equal(options.redirect,'manual');return new Response(null,{status,headers:{Location:'https://other.example/collect'}});});
+  assert.equal(calls,1);assert.equal(response.status,502);assert.equal(response.headers.get('location'),null);assert.equal((await response.json()).error.code,'UPSTREAM_REDIRECT_BLOCKED');
+ }
 });
 test('relay sanitizes upstream errors and preserves recognized missing-data codes',async()=>{
  const response=await proxyPitchApi(request(),{},async()=>Response.json({error:{message:fakeKey,code:'ANALYTICS_UNAVAILABLE'}},{status:404}));

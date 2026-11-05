@@ -20,7 +20,10 @@ export async function proxyPitchApi(request, env={}, upstreamFetch=fetch) {
   try{const text=await request.text();if(text.length>512)return reply({error:{message:'Request too large.'}},413);body=JSON.parse(text);}catch{return reply({error:{message:'Invalid request.'}},400);}
   if(!body || !allowedPath(body.path))return reply({error:{message:'Unsupported data request.'}},400);
   try {
-    const response=await upstreamFetch('https://api.pitchapi.dev'+body.path,{headers:{'X-API-KEY':key,Accept:'application/json'},signal:AbortSignal.any([request.signal,AbortSignal.timeout(25000)]),redirect:'error'});
+    // Workers does not implement redirect:'error'. Manual mode keeps keys on
+    // the fixed provider host; reject every redirect without following it.
+    const response=await upstreamFetch('https://api.pitchapi.dev'+body.path,{headers:{'X-API-KEY':key,Accept:'application/json'},signal:AbortSignal.any([request.signal,AbortSignal.timeout(25000)]),redirect:'manual'});
+    if(response.status>=300&&response.status<400)return reply({error:{code:'UPSTREAM_REDIRECT_BLOCKED',message:'PitchAPI returned an unexpected redirect. Please try again.'}},502);
     if(!response.ok) {
       let error;try{error=(await response.json()).error;}catch{}
       const code=['ANALYTICS_UNAVAILABLE','RESOURCE_NOT_FOUND','RATE_LIMIT_EXCEEDED'].includes(error?.code)?error.code:undefined;
