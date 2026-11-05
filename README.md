@@ -12,7 +12,7 @@ Tactical Studio is a polished React + TypeScript web application for creating, p
 - **Scene timeline** for capturing tactical states, duplicating scenes, replay planning, and future keyframe animation.
 - **Project persistence** through Zustand localStorage autosave.
 - **Canvas-only exports** for PNG, JSON project files, and a WebM MediaRecorder export architecture.
-- **Modern original visual identity** with a dark editorial interface, rounded panels, glow accents, and distinctive player labels.
+- **Light-first studio home** with the tactics board as the main workspace and three WIP projects below it. The home page, board, and video editor share a light/dark switch; the choice is saved with the board for the current tab session.
 
 ## Tech Stack
 
@@ -114,3 +114,40 @@ The application is structured for staged delivery:
 2. Scene capture, duplication, timeline controls, local project saving, and exports.
 3. Advanced animation interpolation, curved movement paths, camera crops, drawing reveals, and FFmpeg.wasm MP4/GIF rendering.
 4. CSV/JSON squad import, advanced layer grouping, and collaborative template libraries.
+
+## Stats Analysis / Data Hub
+
+Open `#stats` from the home page. This light-first workspace has a shared dark-mode toggle, independently selectable scatter axes, quick views, player pins and spotlight, club/lineup-role/minutes/search filters, per-90 or total values, a sortable table with optional columns, CSV exports, SVG chart exports, and match-level action heatmaps.
+
+**Bring your own key:** each visitor enters their own [PitchAPI key](https://pitchapi.dev/get-api-key) in **Connect your data**. The key and imported data live in the current tab's JavaScript memory only. Navigation within this application preserves that session; reload or **Disconnect** clears it. Keys are never stored in localStorage, sessionStorage, URLs, project files, exports, source code or a shared server secret. Do not configure `PITCHAPI_API_KEY` or any `VITE_*` key. The demo is explicitly fictional. CSV files are processed locally in the browser; column mapping supports totals and per-90 values, with minutes required to normalize comparisons.
+
+Imports cover the chosen season's completed Premier League fixtures, optionally limited to the latest 10 or 30 league matches. Player totals are aggregated across those matches, not presented as a complete season when a limited sample is chosen. There are four requests per match (player stats, advanced stats, lineups, shot records), plus league/match discovery; heatmaps load on demand. Requests are limited to three concurrent matches, cancellable and cached only in memory for that connection. Provider errors preserve the previous dataset.
+
+Missing metrics are never blindly zero-filled. Shooting metrics omitted from player summaries are cross-checked against complete first/second-half shot records; zero attempts establish a genuine zero, while unavailable shot-model values remain missing. A metric is unavailable if any of a player's appearances lacks it. Per-90 counts use the same sample's minutes; pass completion is weighted by attempted passes. Lineup roles are broad categories inferred from formation coordinates or substitute roles, weighted by minutes; they are not a definitive scouting position. Heatmaps show 16 × 12 match-level recorded ball-action density, not tracking positions or distance covered. Metric descriptions reflect PitchAPI definitions, which can differ from other providers.
+
+### Private relay and production setup
+
+PitchAPI currently allows browser CORS requests only from its own website. `server/pitchapi-proxy.mjs` therefore provides a narrow, stateless relay: it accepts a visitor's key in a POST header, forwards it only to `https://api.pitchapi.dev`, disables redirects and caching, permits only the endpoints needed by the hub, and sanitizes upstream errors. The relay never logs or persists the key or payload. The same handler is mounted at `/api/pitchapi` during `npm run dev`.
+
+**GitHub Pages is static, so a relay must be deployed before live API imports will work on the public site.** The worker is ready for Cloudflare:
+
+1. Deploy `server/wrangler.toml` with the project's Cloudflare account (`npx wrangler deploy --config server/wrangler.toml`). Do not add an API key as a Worker secret.
+2. Set the public Worker URL as the GitHub repository variable `VITE_PITCHAPI_PROXY_URL`; the Pages build reads it. For a manual build, use the same frontend environment variable (see `.env.example`). Rebuild after changing it. Alternatively, route the Worker at the site's `/api/pitchapi` path and leave the variable empty.
+3. The allowed production origins are `https://zaidtacticsboard.com` and its `www` alias. Local origins are enabled only by the development plugin. Keep production request/trace logging disabled, including at any additional proxy layer.
+4. Test a visitor's own key on the deployed site before announcing API availability. A missing relay shows an actionable message; CSV and demo mode continue to work.
+
+Run `npm test` for aggregation, complete-sample missing values, weighted percentages, CSV validation/export, plotting edge cases, provider failures, key lifetime and relay restrictions. `npm run build` checks types and produces the production assets. No real key is needed by the automated tests.
+
+### Personal players and custom datasets
+
+Use **Add my data** in the Data Hub. **Add myself** accepts a player name, team, role, minutes, sample label and any known statistics. Choose totals or per-90 input; percentages remain percentages. Personal players use diamond markers and a **Yours** badge, stay visible while benchmark filters change, and can be edited or removed. Averages, correlation and percentile comparisons exclude personal markers from the benchmark. Heatmaps remain available only for actual PitchAPI players, never for personal profiles.
+
+**Import a dataset** accepts a CSV upload or pasted CSV, detects familiar headers (including Squad, Min, PrgP and PrgC), and lets users map other headings. Units are chosen per statistic, supporting mixed totals and per-90 columns. Review validation and the first three rows before adding up to 50 personal comparison players or replacing the base table with up to 5,000 players. Namespaced import IDs keep separate imports distinct. Unknown figures remain missing; invalid numbers, duplicated mappings and unusable per-90 inputs are rejected. At least two available metrics select usable axes automatically.
+
+Files and profiles stay in tab memory. **Save my players** downloads a totals CSV with sample labels for later re-import. CSV exports identify personal versus benchmark rows; chart exports include a personal-data caption. A personal player can be entered before connecting PitchAPI and remains available when the professional benchmark imports. Reload clears data and credentials; disconnect clears imported and personal session data. Per-90 comparisons adjust for minutes only, not competition strength or incompatible provider definitions.
+
+### Personalization and motion
+
+The palette button on the home page or Data Hub opens live appearance controls: five accents, light/dark mode, soft/crisp panels, comfortable/compact tables, role/accent player colors, marker size, chart height, grid visibility, and smooth/reduced motion. Appearance preferences are stored locally under `ztb.studio.appearance.v1`; named chart views under `ztb.stats.views.v1` store axes, units, benchmark filters, columns and display toggles only. Neither store contains player datasets or API keys. Up to eight named views can be saved, restored or removed. The existing board theme persistence is unchanged.
+
+Home-page entrances and hover states, dialog entrances, percentile bars and scatter-point movement use short CSS transitions. Point movement is disabled above 500 plotted players. Both the personal reduced-motion preference and the operating system's `prefers-reduced-motion` setting suppress transitions. Pitch interaction mechanics are unaffected.

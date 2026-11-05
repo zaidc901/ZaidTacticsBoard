@@ -2,6 +2,9 @@ import { lazy, Suspense, useCallback, useEffect, useRef, useState } from 'react'
 import type Konva from 'konva';
 import { ControlDock, DockModeSwitcher } from './components/ControlDock';
 import { StudioHome } from './components/StudioHome';
+import { StudioPreferencesDialog } from './components/StudioPreferencesDialog';
+import { useStudioPreferences } from './hooks/useStudioPreferences';
+import { ACCENTS } from './utils/studioPreferences';
 import { useMediaQuery } from './hooks/useMediaQuery';
 import { useTacticsStore } from './store/tacticsStore';
 import { Drawing, ExportRegion, PlaybackDrawing, PlaybackFrame, Scene } from './types/domain';
@@ -9,13 +12,14 @@ import { exportStageImage, recordStageAnimation } from './utils/exporters';
 
 const PitchCanvas = lazy(() => import('./components/PitchCanvas').then(module => ({ default: module.PitchCanvas })));
 const VideoAnalysisTool = lazy(() => import('./components/VideoAnalysisTool').then(module => ({ default: module.VideoAnalysisTool })));
+const StatsHub = lazy(() => import('./components/stats/StatsHub').then(module => ({ default: module.StatsHub })));
 
 const nextFrame = () => new Promise<void>(resolve => requestAnimationFrame(() => resolve()));
-type AppMode = 'home' | 'board' | 'video';
+type AppMode = 'home' | 'board' | 'video' | 'stats';
 
 function modeFromHash(): AppMode {
   const hash = window.location.hash.replace('#', '');
-  if (hash === 'board' || hash === 'video') return hash;
+  if (hash === 'board' || hash === 'video' || hash === 'stats') return hash;
   return 'home';
 }
 
@@ -130,10 +134,14 @@ function sceneFrame(scene: Scene): PlaybackFrame {
 }
 
 export default function App() {
+  const { preferences } = useStudioPreferences();
+  const [preferencesOpen, setPreferencesOpen] = useState(false);
   const stageRef = useRef<Konva.Stage | null>(null);
   const [mode, setMode] = useState<AppMode>(() => modeFromHash());
   const [videoOpened, setVideoOpened] = useState(() => modeFromHash() === 'video');
+  const [statsOpened, setStatsOpened] = useState(() => modeFromHash() === 'stats');
   useEffect(() => { if (mode === 'video') setVideoOpened(true); }, [mode]);
+  useEffect(() => { if (mode === 'stats') setStatsOpened(true); }, [mode]);
   const dark = useTacticsStore(s => s.project.settings.theme === 'dark');
   const dockPosition = useTacticsStore(s => s.dockPosition);
   const touchLayout = useMediaQuery('(pointer: coarse), (max-width: 767px)');
@@ -190,14 +198,16 @@ export default function App() {
       .finally(() => useTacticsStore.getState().clearPlaybackFrame());
   }, [playScenes]);
 
-  return <div className="relative h-screen h-[100dvh] overflow-hidden">
-    {mode === 'home' && <StudioHome onOpenBoard={() => openMode('board')} onOpenVideo={() => openMode('video')} />}
-    {(videoOpened || mode === 'video') && <div className={mode === 'video' ? 'h-full' : 'hidden'} aria-hidden={mode !== 'video'}><Suspense fallback={<div className="grid h-full place-items-center bg-slate-950 text-sm font-black text-slate-300">Opening video studio…</div>}>
+  return <div className="relative h-screen h-[100dvh] overflow-hidden" data-motion={preferences.motion} data-corners={preferences.corners} style={{'--studio-accent':dark?ACCENTS[preferences.accent].dark:ACCENTS[preferences.accent].light} as React.CSSProperties}>
+    <StudioPreferencesDialog open={preferencesOpen} onClose={() => setPreferencesOpen(false)} />
+    {mode === 'home' && <StudioHome onOpenBoard={() => openMode('board')} onOpenVideo={() => openMode('video')} onOpenStats={() => openMode('stats')} onPersonalize={() => setPreferencesOpen(true)} />}
+    {(statsOpened || mode === 'stats') && <div className={mode === 'stats' ? 'h-full' : 'hidden'} aria-hidden={mode !== 'stats'}><Suspense fallback={<div className={`grid h-full place-items-center text-sm ${dark ? 'bg-[#141922] text-slate-200' : 'bg-[#f7f9fa] text-slate-600'}`}>Opening data studio…</div>}><StatsHub onHome={() => openMode('home')} onOpenBoard={() => openMode('board')} onPersonalize={() => setPreferencesOpen(true)} /></Suspense></div>}
+    {(videoOpened || mode === 'video') && <div className={mode === 'video' ? 'h-full' : 'hidden'} aria-hidden={mode !== 'video'}><Suspense fallback={<div className={`grid h-full place-items-center text-sm font-semibold ${dark ? 'bg-[#141922] text-slate-200' : 'bg-[#f7f9fa] text-slate-600'}`}>Opening video studio…</div>}>
       <VideoAnalysisTool active={mode === 'video'} onHome={() => openMode('home')} onOpenBoard={() => openMode('board')} />
     </Suspense></div>}
     {mode === 'board' && <div className={`tactics-shell flex h-full w-full overflow-hidden ${effectiveDockPosition === 'right' ? 'flex-row' : 'flex-col'} ${touchLayout ? 'tactics-touch' : ''} ${dark ? 'tactics-dark bg-slate-950 text-slate-100' : 'bg-[#f6f9ff] text-[#0b172a]'}`}>
       <main className="relative min-h-0 min-w-0 flex-1 overflow-hidden">
-        <Suspense fallback={<div className="grid h-full place-items-center bg-[#071b12] text-sm font-black text-white">Opening tactics board…</div>}>
+        <Suspense fallback={<div className={`grid h-full place-items-center text-sm font-semibold ${dark ? 'bg-[#141922] text-slate-200' : 'bg-[#f7f9fa] text-slate-600'}`}>Opening tactics board…</div>}>
           <PitchCanvas stageRef={stageRef} onHome={() => openMode('home')} onOpenVideo={() => openMode('video')} />
         </Suspense>
         {effectiveDockPosition === 'hidden' && <div className="pointer-events-none absolute right-6 top-20 z-40 flex items-center gap-2">

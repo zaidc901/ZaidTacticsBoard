@@ -1,69 +1,129 @@
-import { AlertTriangle, ArrowRight, Film, Gamepad2, PenTool, Video } from 'lucide-react';
+import { ArrowDown, ArrowRight, BarChart3, Gamepad2, Layers3, Moon, MoveUpRight, Palette, PenTool, Play, Sun, Video } from 'lucide-react';
+import { useStudioTheme } from '../hooks/useStudioTheme';
 
 type StudioHomeProps = {
   onOpenBoard: () => void;
   onOpenVideo: () => void;
+  onOpenStats: () => void;
+  onPersonalize: () => void;
 };
 
-export function StudioHome({ onOpenBoard, onOpenVideo }: StudioHomeProps) {
-  return <div className="tactics-shell h-full min-h-[100dvh] overflow-y-auto bg-slate-950 text-slate-100">
-    <div className="relative flex min-h-[100dvh] flex-col bg-[linear-gradient(90deg,rgba(34,211,238,.06)_1px,transparent_1px),linear-gradient(0deg,rgba(96,165,250,.055)_1px,transparent_1px),radial-gradient(circle_at_18%_12%,rgba(37,99,235,.24),transparent_32%),linear-gradient(135deg,#020617,#0b1220_48%,#101827)] bg-[size:70px_70px,70px_70px,auto,auto]">
-      <header className="relative z-10 flex h-16 shrink-0 items-center justify-between border-b border-slate-800/80 bg-slate-950/60 px-4 backdrop-blur-xl sm:px-6">
-        <div className="flex min-w-0 items-center gap-2.5">
-          <img src="/ZTBLogo.png" alt="ZaidTacticsBoard logo" className="h-10 w-10 shrink-0 rounded-full bg-white object-cover p-0.5 shadow-[0_5px_18px_rgba(37,99,235,.28)] ring-1 ring-white/80" />
-          <div className="min-w-0">
-            <h1 className="truncate bg-gradient-to-r from-white via-[#93c5fd] to-[#5eead4] bg-clip-text text-xl font-black leading-none text-transparent sm:text-2xl" style={{ fontFamily: '"Segoe UI Variable Display", "Aptos Display", Inter, system-ui, sans-serif' }}>ZaidTacticsBoard</h1>
-            <p className="mt-0.5 text-[9px] font-black uppercase tracking-[0.24em] text-slate-400">Tactical studio</p>
-          </div>
-        </div>
-      </header>
+const previewPlayers = [
+  [55, 160, 1], [125, 65, 3], [123, 125, 4], [123, 195, 5], [125, 255, 2],
+  [205, 160, 6], [245, 91, 8], [245, 229, 10], [335, 58, 11], [357, 160, 9], [335, 262, 7],
+];
+const previewOpponents = [[468, 160], [408, 70], [405, 130], [405, 193], [408, 251], [317, 103], [313, 213], [285, 160], [216, 52], [202, 270], [164, 169]];
 
-      <main className="relative z-10 flex flex-1 items-center justify-center px-3 py-4 sm:px-6 sm:py-6">
-        <section className="grid w-full max-w-5xl gap-4 md:grid-cols-2">
-          <button type="button" onClick={onOpenBoard} className="group min-h-[14rem] rounded-2xl border border-slate-700 bg-slate-900/82 p-4 text-left shadow-[0_20px_58px_rgba(2,6,23,.26)] backdrop-blur transition hover:-translate-y-1 hover:border-[#60a5fa] hover:bg-slate-900 sm:min-h-[18rem] sm:p-6">
-            <span className="mb-5 grid h-14 w-14 place-items-center rounded-xl bg-[#2563eb] text-white shadow-[0_14px_30px_rgba(37,99,235,.24)]">
-              <PenTool size={26} />
-            </span>
-            <span className="block text-2xl font-black tracking-normal text-white">Tactics Board</span>
-            <span className="mt-3 block max-w-md text-sm font-semibold leading-6 text-slate-400">Build football shapes, players, scenes, and animated tactical boards.</span>
-            <span className="mt-6 inline-flex h-10 items-center gap-2 rounded-lg bg-[#2563eb] px-4 text-sm font-black text-white transition group-hover:bg-[#1d4ed8]">
-              Open board <ArrowRight size={16} />
-            </span>
-          </button>
-
-          <button type="button" onClick={onOpenVideo} className="group min-h-[14rem] rounded-2xl border border-slate-700 bg-slate-900/82 p-4 text-left shadow-[0_20px_58px_rgba(2,6,23,.24)] backdrop-blur transition hover:-translate-y-1 hover:border-[#2dd4bf] hover:bg-slate-900 sm:min-h-[18rem] sm:p-6">
-            <span className="mb-5 flex items-start justify-between gap-3">
-              <span className="grid h-14 w-14 place-items-center rounded-xl bg-[#0f766e] text-white shadow-[0_14px_30px_rgba(15,118,110,.22)]">
-                <Video size={27} />
-              </span>
-              <span className="inline-flex h-8 items-center gap-1.5 rounded-lg border border-amber-300/40 bg-amber-300/12 px-2.5 text-[10px] font-black uppercase tracking-[0.14em] text-amber-100">
-                <AlertTriangle size={13} /> WIP
-              </span>
-            </span>
-            <span className="block text-2xl font-black tracking-normal text-white">Video Analysis</span>
-            <span className="mt-3 block max-w-md text-sm font-semibold leading-6 text-slate-400">Early preview for match clips, analyst overlays, freeze frames, keyframes, and export. It is not final yet, so bugs and rough edges are expected.</span>
-            <span className="mt-6 inline-flex h-10 items-center gap-2 rounded-lg bg-[#0f766e] px-4 text-sm font-black text-white transition group-hover:bg-[#0d9488]">
-              Open WIP tool <Film size={16} />
-            </span>
-          </button>
-
-          <a href="/stretfordgauntlet/" className="group flex flex-col justify-between gap-6 rounded-2xl border border-red-400/35 bg-[linear-gradient(115deg,rgba(127,29,29,.45),rgba(15,23,42,.96)_65%)] p-4 text-left shadow-[0_20px_58px_rgba(2,6,23,.24)] transition hover:-translate-y-1 hover:border-red-300 hover:bg-red-950/55 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-red-300 sm:flex-row sm:items-center sm:p-6 md:col-span-2">
-            <span className="flex min-w-0 items-start gap-4">
-              <span className="grid h-14 w-14 shrink-0 place-items-center rounded-xl bg-red-700 text-white shadow-[0_14px_30px_rgba(185,28,28,.25)]">
-                <Gamepad2 size={28} aria-hidden="true" />
-              </span>
-              <span className="block min-w-0">
-                <span className="block text-[10px] font-black uppercase tracking-[0.18em] text-red-200">Manchester United draft game</span>
-                <span className="mt-1 block text-2xl font-black tracking-normal text-white">The Stretford Gauntlet</span>
-                <span className="mt-2 block max-w-xl text-sm font-semibold leading-6 text-slate-300">Build your all-time United XI and take on ten historic sides. One defeat ends the run.</span>
-              </span>
-            </span>
-            <span className="inline-flex h-10 shrink-0 items-center justify-center gap-2 self-start rounded-lg bg-red-700 px-4 text-sm font-black text-white transition group-hover:bg-red-600 sm:self-auto">
-              Play the gauntlet <ArrowRight size={16} aria-hidden="true" />
-            </span>
-          </a>
-        </section>
-      </main>
+// A decorative, resolution-independent preview; the live board opens from the CTA.
+function BoardPreview() {
+  return <div className="home-board-preview" aria-hidden="true">
+    <div className="home-preview-header">
+      <span><span className="home-preview-dot" /> Match plan</span>
+      <span className="home-preview-formation">4–3–3 <span> / </span> Attacking shape</span>
     </div>
+    <div className="home-preview-pitch">
+      <svg viewBox="0 0 520 320" fill="none">
+        <defs>
+          <pattern id="home-pitch-stripes" width="104" height="320" patternUnits="userSpaceOnUse">
+            <rect width="52" height="320" fill="currentColor" opacity=".035" />
+          </pattern>
+          <marker id="home-pass-arrow" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="5" markerHeight="5" orient="auto-start-reverse">
+            <path d="M1 1 8 5 1 9" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round" />
+          </marker>
+        </defs>
+        <rect width="520" height="320" fill="url(#home-pitch-stripes)" />
+        <g className="home-pitch-lines" strokeWidth="1.2">
+          <rect x="20" y="20" width="480" height="280" rx="2" />
+          <path d="M260 20v280M20 88h68v144H20M500 88h-68v144h68M20 126h26v68H20M500 126h-26v68h26M20 147H9v26h11M500 147h11v26h-11" />
+          <circle cx="260" cy="160" r="41" />
+          <path d="M88 130a36 36 0 0 1 0 60M432 130a36 36 0 0 0 0 60" />
+          <circle cx="260" cy="160" r="2" /><circle cx="68" cy="160" r="2" /><circle cx="452" cy="160" r="2" />
+          <path d="M20 29a9 9 0 0 0 9-9M491 20a9 9 0 0 0 9 9M20 291a9 9 0 0 1 9 9M491 300a9 9 0 0 1 9-9" />
+        </g>
+        <path className="home-tactical-zone" d="m205 160 40-69 90-33 22 102-22 102-90-33Z" />
+        <g className="home-pass-lines" strokeWidth="1.7" strokeLinecap="round" markerEnd="url(#home-pass-arrow)">
+          <path d="m218 153 16-42" strokeDasharray="5 5" />
+          <path d="M261 85q31-20 57-23" />
+          <path d="M349 63q39 25 16 78" strokeDasharray="5 5" />
+        </g>
+        {previewOpponents.map(([x, y], index) => <circle key={index} cx={x} cy={y} r="9" className="home-opponent" />)}
+        {previewPlayers.map(([x, y, number]) => <g key={number}>
+          <circle cx={x} cy={y + 2} r="13" fill="#163f35" opacity=".1" />
+          <circle cx={x} cy={y} r="12" className="home-player" />
+          <text x={x} y={y + .5} textAnchor="middle" dominantBaseline="middle" fill="#fff" fontSize="9" fontWeight="650">{number}</text>
+        </g>)}
+        <circle cx="260" cy="101" r="5" fill="#fff" stroke="#29483d" strokeWidth="1.3" />
+        <path d="m258 99 3 1-1 3-3-1Z" fill="#29483d" />
+      </svg>
+    </div>
+    <div className="home-preview-footer">
+      <span><span className="home-preview-team" /> Your next move, mapped out.</span>
+      <span><Layers3 size={14} /> Scene 01</span>
+    </div>
+  </div>;
+}
+
+export function StudioHome({ onOpenBoard, onOpenVideo, onOpenStats, onPersonalize }: StudioHomeProps) {
+  const { dark, toggleTheme } = useStudioTheme();
+
+  return <div className={`studio-home ${dark ? 'studio-home-dark' : ''}`}>
+    <header className="home-header">
+      <div className="home-header-inner">
+        <a className="home-brand" href="#" aria-label="ZaidTacticsBoard home">
+          <img src="/ZTBLogo.png" alt="" width="38" height="38" />
+          <span>Zaid<span className="home-brand-light">TacticsBoard</span><small>THE FOOTBALL WORKSPACE</small></span>
+        </a>
+        <div className="home-header-actions">
+          <span className="home-header-note">A different view of the game.</span>
+          <button className="home-theme-toggle" type="button" onClick={onPersonalize} aria-label="Personalize workspace"><Palette size={16}/><span>Personalize</span></button>
+          <button className="home-theme-toggle" type="button" onClick={toggleTheme} aria-label={dark ? 'Switch to light mode' : 'Switch to dark mode'} title={dark ? 'Switch to light mode' : 'Switch to dark mode'}>
+            {dark ? <Sun size={16} /> : <Moon size={16} />}<span>{dark ? 'Light mode' : 'Dark mode'}</span>
+          </button>
+        </div>
+      </div>
+    </header>
+
+    <main className="home-main">
+      <section className="home-hero" aria-labelledby="home-title">
+        <div className="home-hero-copy">
+          <p className="home-eyebrow"><span /> TACTICS BOARD</p>
+          <h1 id="home-title">See the game.<br /><span>Shape the play.</span></h1>
+          <p className="home-hero-description">A clear canvas for your football ideas. Build your line-up, draw the movement, and bring every phase of play to life.</p>
+          <button className="home-primary-action" type="button" onClick={onOpenBoard}>Open tactics board <ArrowRight size={18} /></button>
+          <ul className="home-features" aria-label="Tactics board features">
+            <li><PenTool size={14} /> Draw</li><li><Play size={14} /> Animate</li><li><MoveUpRight size={14} /> Export</li>
+          </ul>
+        </div>
+        <BoardPreview />
+      </section>
+
+      <section className="home-projects" aria-labelledby="home-projects-title">
+        <div className="home-section-heading">
+          <div><p className="home-section-eyebrow">BEYOND THE BOARD</p><h2 id="home-projects-title">More in the making</h2></div>
+          <p>Experiments from the studio <ArrowDown size={15} /></p>
+        </div>
+        <div className="home-project-grid">
+          <article className="home-project-card">
+            <div className="home-project-top"><span className="home-project-icon home-icon-video"><Video size={21} /></span><span className="home-wip">Work in progress</span></div>
+            <h3>Video Analysis</h3>
+            <p>Break down match footage with annotations, freeze frames, and tactical overlays.</p>
+            <button type="button" className="home-project-link" onClick={onOpenVideo}>Explore video analysis <ArrowRight size={16} /></button>
+          </article>
+          <article className="home-project-card">
+            <div className="home-project-top"><span className="home-project-icon home-icon-game"><Gamepad2 size={21} /></span><span className="home-wip">Work in progress</span></div>
+            <h3>The Stretford Gauntlet</h3>
+            <p>Your all-time United XI. Ten historic opponents. One shot at going all the way.</p>
+            <a className="home-project-link" href="/stretfordgauntlet/">Play the gauntlet <ArrowRight size={16} /></a>
+          </article>
+          <article className="home-project-card">
+            <div className="home-project-top"><span className="home-project-icon home-icon-stats"><BarChart3 size={21} /></span><span className="home-wip">Work in progress</span></div>
+            <h3>Stats Analysis</h3>
+            <p>Compare players, explore the patterns, and build your own view of Premier League data.</p>
+            <button type="button" className="home-project-link" onClick={onOpenStats}>Explore the data hub <ArrowRight size={16} /></button>
+          </article>
+        </div>
+      </section>
+      <footer className="home-footer"><span>ZaidTacticsBoard</span><span>Made for the way you see football.</span></footer>
+    </main>
   </div>;
 }

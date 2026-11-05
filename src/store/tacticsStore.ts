@@ -121,11 +121,11 @@ const defaultSettings: BoardSettings = {
   ...boardViews.portrait,
   customWidth: 1280,
   customHeight: 1920,
-  grassColor: '#2f7a4f',
+  grassColor: '#69a873',
   lineColor: '#f8fafc',
   lineThickness: 4,
   stripeIntensity: 0.1,
-  backgroundColor: '#071b12',
+  backgroundColor: '#edf7ef',
   border: true,
   pitchScaleX: 1,
   pitchScaleY: 1,
@@ -134,7 +134,7 @@ const defaultSettings: BoardSettings = {
   pepZones: false,
   linkedAreasFollowPlayers: true,
   selectionColor: '#facc15',
-  theme: 'dark',
+  theme: 'portfolio-light',
   accentColor: '#0f766e',
 };
 
@@ -889,11 +889,10 @@ export const useTacticsStore = create<Store>()(persist((set, get) => ({
     const previousSettings = state.project.settings ?? {};
     const migratedSettings = { ...defaultSettings, ...previousSettings };
     const usingLegacyPitch = previousSettings.grassColor === '#315f43' && previousSettings.lineColor === '#dbeafe';
-    if (!previousSettings.theme || previousSettings.theme === 'portfolio-light' || usingLegacyPitch) {
+    if (usingLegacyPitch) {
       Object.assign(migratedSettings, {
-        theme: 'dark',
-        backgroundColor: '#071b12',
-        grassColor: '#2f7a4f',
+        backgroundColor: previousSettings.theme === 'dark' ? '#071b12' : '#edf7ef',
+        grassColor: previousSettings.theme === 'dark' ? '#2f7a4f' : '#69a873',
         lineColor: '#f8fafc',
         accentColor: '#0f766e',
       });

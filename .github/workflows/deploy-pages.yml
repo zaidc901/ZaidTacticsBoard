@@ -33,11 +33,13 @@ jobs:
       - name: Install dependencies
         run: npm ci
 
-      - name: Test board interactions
+      - name: Test application
         run: npm test
 
       - name: Build
         run: npm run build
+        env:
+          VITE_PITCHAPI_PROXY_URL: ${{ vars.VITE_PITCHAPI_PROXY_URL }}
 
       - name: Configure Pages
         uses: actions/configure-pages@v6

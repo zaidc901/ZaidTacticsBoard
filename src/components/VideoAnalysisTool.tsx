@@ -4,6 +4,7 @@ import Konva from 'konva';
 import { ArrowLeft, ArrowRight, Circle as CircleIcon, Copy, Download, Eraser, Eye, EyeOff, Film, Gauge, Grid3X3, HelpCircle, Home, KeyRound, Lock, Moon, MousePointer2, MoveRight, Pause, Play, Plus, Redo2, Route, Scissors, Snowflake, Sparkles, Square, Sun, Trash2, Type, Undo2, Unlock, Upload, Video, X } from 'lucide-react';
 import { Arrow, Circle, Ellipse, Group, Layer, Line, Rect, Stage, Text } from 'react-konva';
 import { useMediaQuery } from '../hooks/useMediaQuery';
+import { useStudioTheme } from '../hooks/useStudioTheme';
 
 import type { VideoTool, VideoAnnotationType, GridMode, OverlayMotion, OverlayPattern, EditCommand, VideoClip, VideoKeyframe, VideoAnnotation, FreezeSegment, TimelineSegment, VideoAnalysisToolProps, Mapper, Bounds, DrawingStyle, HistorySnapshot } from '../types/video';
 import { buildTimelineSegments, timelineDuration, timelineSnapPoints, nearestTimelineSnap, closestTimelineSnap, snapTimelineTime, timelineToSource, sourceToTimeline } from '../utils/videoTimeline';
@@ -1516,7 +1517,7 @@ export function VideoAnalysisTool({ onHome, onOpenBoard, active = true }: VideoA
   const [trimEnd, setTrimEnd] = useState(0);
   const [gridMode, setGridMode] = useState<GridMode>('off');
   const [previewZoom, setPreviewZoom] = useState(1);
-  const [darkMode, setDarkMode] = useState(true);
+  const { dark: darkMode, toggleTheme } = useStudioTheme();
   const [helpOpen, setHelpOpen] = useState(false);
   const [labelEditor, setLabelEditor] = useState<{ id: string; value: string } | null>(null);
   const [exporting, setExporting] = useState(false);
@@ -2242,7 +2243,7 @@ export function VideoAnalysisTool({ onHome, onOpenBoard, active = true }: VideoA
       </div>
       <div className="flex shrink-0 items-center gap-1.5">
         <button type="button" onClick={() => setHelpOpen(true)} title="Help" className="grid h-9 w-9 place-items-center rounded-lg border border-[#d7e5f6] bg-white/82 text-[#0b172a] hover:border-[#2563eb]"><HelpCircle size={15} /></button>
-        <button type="button" onClick={() => setDarkMode(current => !current)} title={darkMode ? 'Switch to light mode' : 'Switch to dark mode'} className="grid h-9 w-9 place-items-center rounded-lg border border-[#d7e5f6] bg-white/82 text-[#0b172a] hover:border-[#2563eb]">{darkMode ? <Sun size={15} /> : <Moon size={15} />}</button>
+        <button type="button" onClick={toggleTheme} aria-label={darkMode ? 'Switch to light mode' : 'Switch to dark mode'} title={darkMode ? 'Switch to light mode' : 'Switch to dark mode'} className="grid h-9 w-9 place-items-center rounded-lg border border-[#d7e5f6] bg-white/82 text-[#0b172a] hover:border-[#2563eb]">{darkMode ? <Sun size={15} /> : <Moon size={15} />}</button>
         <button type="button" onClick={onHome} title="Studio home" className="grid h-9 w-9 place-items-center rounded-lg border border-[#d7e5f6] bg-white/82 text-[#0b172a] hover:border-[#2563eb]"><Home size={15} /></button>
         <button type="button" onClick={onOpenBoard} aria-label="Board" className="flex h-9 items-center gap-1.5 rounded-lg border border-[#d7e5f6] bg-white/82 px-2.5 text-xs font-black text-[#0b172a] hover:border-[#2563eb]"><ArrowLeft size={14} /> <span className="hidden sm:inline">Board</span></button>
       </div>

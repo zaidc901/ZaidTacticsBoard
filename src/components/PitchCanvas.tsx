@@ -6,6 +6,7 @@ import { Stage, Layer, Rect, Line, Circle, Text, Group, Arrow, Image as KonvaIma
 import Konva from 'konva';
 import { flagImageUrlByPresetId, teamPresetById } from '../data/teamPresets';
 import { useMediaQuery } from '../hooks/useMediaQuery';
+import { useStudioTheme } from '../hooks/useStudioTheme';
 import { BoardToolbox, PitchScaleControl, QuickActions } from './ControlDock';
 import { boardDragMoved, constrainBoardMove } from '../utils/boardInteraction';
 import { boardCanvasPixelRatio, boardFitZoom, boardZoomBaseline } from '../utils/boardZoom';
@@ -1083,7 +1084,7 @@ export function PitchCanvas({ stageRef, onHome, onOpenVideo }: { stageRef: RefOb
   const curveDragRef = useRef<CurveDragSession | null>(null);
   const { ref: containerRef, size } = useElementSize<HTMLDivElement>();
   const { width, height, format } = project.settings;
-  const dark = project.settings.theme === 'dark';
+  const { dark, toggleTheme } = useStudioTheme();
   const touchCanvas = useMediaQuery('(pointer: coarse), (max-width: 767px)');
   const compactCanvas = useMediaQuery('(max-width: 640px)');
   const pitchScaleX = project.settings.pitchScaleX ?? 1;
@@ -1585,12 +1586,6 @@ export function PitchCanvas({ stageRef, onHome, onOpenVideo }: { stageRef: RefOb
       setEmailCopied(false);
     }
   };
-  const toggleTheme = () => updateSettings({
-    theme: dark ? 'portfolio-light' : 'dark',
-    backgroundColor: dark ? '#edf7ef' : '#071b12',
-    grassColor: dark ? '#69a873' : '#2f7a4f',
-    lineColor: '#f8fafc',
-  });
 
   return <div className="board-workspace relative flex h-full w-full flex-col overflow-hidden">
     <header className={`board-header relative z-20 flex h-14 shrink-0 items-center justify-between gap-3 border-b px-3 backdrop-blur-xl sm:px-4 ${dark ? 'border-emerald-950/80 bg-[#04130b]/70' : 'border-white/70 bg-white/60'}`}>
