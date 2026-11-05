@@ -39,7 +39,7 @@ jobs:
       - name: Build
         run: npm run build
         env:
-          VITE_PITCHAPI_PROXY_URL: ${{ vars.VITE_PITCHAPI_PROXY_URL }}
+          VITE_PITCHAPI_PROXY_URL: ${{ vars.VITE_PITCHAPI_PROXY_URL || 'https://zaid-pitchapi-relay.zaidtacticsboard.workers.dev' }}
 
       - name: Configure Pages
         uses: actions/configure-pages@v6

@@ -129,10 +129,10 @@ Missing metrics are never blindly zero-filled. Shooting metrics omitted from pla
 
 PitchAPI currently allows browser CORS requests only from its own website. `server/pitchapi-proxy.mjs` therefore provides a narrow, stateless relay: it accepts a visitor's key in a POST header, forwards it only to `https://api.pitchapi.dev`, disables redirects and caching, permits only the endpoints needed by the hub, and sanitizes upstream errors. The relay never logs or persists the key or payload. The same handler is mounted at `/api/pitchapi` during `npm run dev`.
 
-**GitHub Pages is static, so a relay must be deployed before live API imports will work on the public site.** The worker is ready for Cloudflare:
+**GitHub Pages serves the website; Cloudflare Workers runs the API relay.** The production relay is `https://zaid-pitchapi-relay.zaidtacticsboard.workers.dev`. The Pages workflow uses that public address by default; no visitor API key is configured on either host.
 
-1. Deploy `server/wrangler.toml` with the project's Cloudflare account (`npx wrangler deploy --config server/wrangler.toml`). Do not add an API key as a Worker secret.
-2. Set the public Worker URL as the GitHub repository variable `VITE_PITCHAPI_PROXY_URL`; the Pages build reads it. For a manual build, use the same frontend environment variable (see `.env.example`). Rebuild after changing it. Alternatively, route the Worker at the site's `/api/pitchapi` path and leave the variable empty.
+1. To update the relay, deploy `server/wrangler.toml` with the project's Cloudflare account (`npx wrangler deploy --config server/wrangler.toml`). A deployment token can be scoped to this Worker only. Do not add a PitchAPI key as a Worker secret.
+2. To change the relay address, set the public URL as the GitHub repository variable `VITE_PITCHAPI_PROXY_URL`, overriding the workflow's default. For a manual build, use the same frontend environment variable (see `.env.example`). Rebuild after changing it. For a Worker routed at the site's `/api/pitchapi` path, set the variable explicitly to `/api/pitchapi`.
 3. The allowed production origins are `https://zaidtacticsboard.com` and its `www` alias. Local origins are enabled only by the development plugin. Keep production request/trace logging disabled, including at any additional proxy layer.
 4. Test a visitor's own key on the deployed site before announcing API availability. A missing relay shows an actionable message; CSV and demo mode continue to work.
 
